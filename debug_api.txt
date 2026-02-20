@@ -1,0 +1,46 @@
+[14:36:40] ℹ️ Usando Mock Data para el modo Máquina de Dinero.
+[15:25:40] ℹ️ Usando Mock Data para el modo Máquina de Dinero.
+[15:31:11] ℹ️ Usando Mock Data para el modo Máquina de Dinero.
+[15:31:12] ℹ️ Usando Mock Data para el modo Máquina de Dinero.
+[15:31:12] ℹ️ Usando Mock Data para el modo Máquina de Dinero.
+[15:40:03] ℹ️ Usando Mock Data para HOY.
+[15:44:15] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:16] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:16] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:16] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:17] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:17] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:18] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:18] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:18] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:18] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:19] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:19] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:19] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:19] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:20] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:20] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:20] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:21] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:21] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:44:21] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:02] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:03] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:03] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:04] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:04] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:05] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:05] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:06] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:06] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:45:07] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:35] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:36] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:36] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:37] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:37] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:38] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:38] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:39] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:39] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
+[15:48:40] ⚠️ Error reportado por API: {'plan': 'Free plans do not have access to this season, try from 2022 to 2024.'}
