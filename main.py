@@ -7,9 +7,12 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
+print(f"[{datetime.now()}] >>> CARGANDO MAIN.PY (Versión Diagnóstico 10:35) <<<")
 API_KEY = os.getenv("FOOTBALL_API_KEY")
+print(f"[{datetime.now()}] DEBUG: API_KEY detectada? {'SÍ' if API_KEY else 'NO'}")
 if API_KEY:
     API_KEY = API_KEY.strip()
+    print(f"[{datetime.now()}] DEBUG: API_KEY (primeros 4): {API_KEY[:4]}")
 
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {
@@ -47,7 +50,7 @@ class FixItPRO:
         self.fixtures_predictions = {} # Almacén para coeficientes nativos
         self.fixtures_advice = {} # Almacén para justificación de la API
         self.cached_picks = []
-        self.last_updated: str = "Sincronizando..."
+        self.last_updated: str = "Iniciando Motor PRO..."
         self._lock = threading.RLock()
         self.stats_file = "stats.json"
         self.stats = self.load_stats()
