@@ -11,6 +11,16 @@ def urlencode_filter(s):
         return ''
     return urllib.parse.quote(str(s))
 
+@app.route('/test-api')
+def test_api():
+    """Ruta para forzar sincronización y ver logs directos en el navegador."""
+    try:
+        from main import engine
+        main.engine.fetch_data()
+        return f"OK: Sincronización terminada. Estado final: {main.engine.last_updated}"
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
 @app.route('/')
 def index():
     # Obtener el Top picks actual
