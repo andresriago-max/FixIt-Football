@@ -11,13 +11,16 @@ print(f"[{datetime.now()}] >>> CARGANDO MAIN.PY (Versión Diagnóstico 10:35) <<
 API_KEY = os.getenv("FOOTBALL_API_KEY")
 print(f"[{datetime.now()}] DEBUG: API_KEY detectada? {'SÍ' if API_KEY else 'NO'}")
 if API_KEY:
-    API_KEY = API_KEY.strip()
+    API_KEY = str(API_KEY).strip()
     print(f"[{datetime.now()}] DEBUG: API_KEY (primeros 4): {API_KEY[:4]}")
 
+# Configuración Global
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {
-    'x-apisports-key': API_KEY
+    'x-apisports-key': API_KEY,
+    'x-rapidapi-host': 'v3.football.api-sports.io' # Re-añadido por seguridad de routing
 }
+session = requests.Session()
 
 # Ligas PRO habilitadas (Mapping API-Sports ID)
 # 140: La Liga, 39: Premier League, 135: Serie A, 78: Bundesliga, 61: Ligue 1, 94: Primeira Liga, 88: Eredivisie
@@ -81,60 +84,50 @@ class FixItPRO:
 
             print(f"[{datetime.now()}] Iniciando peticion a API-Sports...")
             print(f"URL: {url}")
-            print(f"Headers (Key length): {len(HEADERS.get('x-apisports-key', ''))}")
+            k_len = len(str(HEADERS.get('x-apisports-key', '')))
+            print(f"Headers (Key length): {k_len}")
             
-            # Timeout (Connect, Read) - Más granular
+            # Timeout (Connect, Read) - Configuración agresiva para Render
             try:
-                response = requests.get(url, headers=HEADERS, timeout=(10, 30))
-                print(f"[{datetime.now()}] Respuesta recibida! Status: {response.status_code}")
+                with self._lock: self.last_updated = "Solicitando partidos..."
+                print(f"[{datetime.now()}] >>> GET Fixtures en {url}...")
+                response = session.get(url, headers=HEADERS, timeout=(5, 10))
+                print(f"[{datetime.now()}] API-Fixtures OK! Status: {response.status_code}")
             except Exception as e:
-                print(f"[{datetime.now()}] ERROR CRITICO en requests.get: {e}")
-                with self._lock:
-                    self.last_updated = f"Err: Conexión API"
+                print(f"[{datetime.now()}] ERROR EN REQUEST: {e}")
+                with self._lock: self.last_updated = "Err: Conexión"
                 return
             
             if response.status_code == 200:
                 data = response.json()
-                # Verificar si la API devolvió un mensaje de error en el JSON
                 if data.get('errors'):
-                    print(f"[{datetime.now()}] API devolvió errores: {data['errors']}")
-                    with self._lock:
-                        err_msg = str(next(iter(data['errors'].values()), 'Unknown'))
-                        self.last_updated = f"API ERR: {err_msg[:15]}"
+                    errs = data['errors']
+                    print(f"[{datetime.now()}] API devolvió errores: {errs}")
+                    with self._lock: 
+                        first_err = str(next(iter(errs.values()), "Unknown"))
+                        self.last_updated = f"API ERR: {first_err[:12]}"
                     return
 
                 fixtures = data.get('response', [])
-                print(f"[{datetime.now()}] Partidos recibidos: {len(fixtures)}")
-                
-                # Filtrar solo ligas habilitadas
-                processed_matches = []
-                for f in fixtures:
-                    league_id = f['league']['id']
-                    if league_id in ENABLED_LEAGUES:
-                        processed_matches.append(f)
-                
-                print(f"Partidos filtrados (Ligas PRO): {len(processed_matches)}")
+                processed_matches = [f for f in fixtures if f['league']['id'] in ENABLED_LEAGUES]
                 
                 with self._lock:
                     self.matches = processed_matches
-                    self.last_updated = datetime.now().strftime("%H:%M")
+                    # FEEDBACK INMEDIATO AL USUARIO
+                    self.last_updated = datetime.now().strftime("%H:%M") + "..."
+                
+                print(f"[{datetime.now()}] Ligas PRO filtradas: {len(processed_matches)}. Procesando picks...")
                 
                 if processed_matches:
-                    print(f"Buscando cuotas para {len(processed_matches)} partidos...")
                     self.fetch_odds(date_today)
-                    
-                    # Obtener IDs de los partidos para pedir predicciones
                     fixture_ids = [m['fixture']['id'] for m in processed_matches]
-                    print(f"Consultando predicciones oficiales para {len(fixture_ids)} partidos...")
                     self.fetch_predictions(fixture_ids)
-                else:
-                    print("Sin partidos para las ligas habilitadas hoy.")
                 
                 with self._lock:
                     self.cached_picks = self.process_top_8()
                     self.update_stats_from_results()
-                    self.last_updated = datetime.now().strftime("%H:%M") # Asegurar actualización final
-                    print(f"[{datetime.now()}] API Sync Finalizada. Partidos: {len(self.matches)}, Cuotas: {len(self.fixtures_odds)}, Picks PRO: {len(self.cached_picks)}")
+                    self.last_updated = datetime.now().strftime("%H:%M")
+                    print(f"[{datetime.now()}] SINCRO FINALIZADA. Picks PRO: {len(self.cached_picks)}")
             else:
                 with self._lock:
                     self.last_updated = f"API ERR: {response.status_code}"
@@ -190,10 +183,13 @@ class FixItPRO:
         """Obtiene predicciones nativas (Home %) y consejos para los partidos clave."""
         new_preds = {}
         new_advice = {}
+        count = 0
         for f_id in fixtures_ids[:40]:
             try:
+                count += 1
+                if count % 5 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/40...")
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
-                response = requests.get(url, headers=HEADERS, timeout=10)
+                response = session.get(url, headers=HEADERS, timeout=7)
                 if response.status_code == 200:
                     data = response.json()
                     res = data.get('response', [])
