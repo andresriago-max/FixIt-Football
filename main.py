@@ -63,13 +63,23 @@ class FixItPRO:
     def fetch_data(self):
         """Obtiene partidos de la API-sports forzando la fecha del SÁBADO (2026-02-21)."""
         try:
+            print(f"[{datetime.now()}] Iniciando fetch_data...")
+            if not API_KEY:
+                print("CRITICAL: FOOTBALL_API_KEY no encontrada en variables de entorno.")
+                with self._lock:
+                    self.last_updated = "Error: Falta API KEY"
+                return
+
             date_today = "2026-02-21" # Salto temporal para Previa del Sábado
             url = f"{BASE_URL}/fixtures?date={date_today}"
+            print(f"Consultando fixtures en: {url}")
             response = requests.get(url, headers=HEADERS, timeout=15)
             
+            print(f"Respuesta API Fixtures: {response.status_code}")
             if response.status_code == 200:
                 data = response.json()
                 fixtures = data.get('response', [])
+                print(f"Partidos recibidos: {len(fixtures)}")
                 
                 # Filtrar solo ligas habilitadas
                 processed_matches = []
@@ -78,21 +88,27 @@ class FixItPRO:
                     if league_id in ENABLED_LEAGUES:
                         processed_matches.append(f)
                 
+                print(f"Partidos filtrados (Ligas PRO): {len(processed_matches)}")
+                
                 with self._lock:
                     self.matches = processed_matches
                     self.last_updated = datetime.now().strftime("%H:%M")
                 
-                print(f"Buscando cuotas para {len(processed_matches)} partidos...")
-                self.fetch_odds(date_today)
-                
-                # Obtener IDs de los partidos para pedir predicciones
-                fixture_ids = [m['fixture']['id'] for m in processed_matches]
-                print(f"Consultando predicciones oficiales para {len(fixture_ids)} partidos...")
-                self.fetch_predictions(fixture_ids)
+                if processed_matches:
+                    print(f"Buscando cuotas para {len(processed_matches)} partidos...")
+                    self.fetch_odds(date_today)
+                    
+                    # Obtener IDs de los partidos para pedir predicciones
+                    fixture_ids = [m['fixture']['id'] for m in processed_matches]
+                    print(f"Consultando predicciones oficiales para {len(fixture_ids)} partidos...")
+                    self.fetch_predictions(fixture_ids)
+                else:
+                    print("Sin partidos para las ligas habilitadas hoy.")
                 
                 with self._lock:
                     self.cached_picks = self.process_top_8()
                     self.update_stats_from_results()
+                    self.last_updated = datetime.now().strftime("%H:%M") # Asegurar actualización final
                     print(f"[{datetime.now()}] API Sync Finalizada. Partidos: {len(self.matches)}, Cuotas: {len(self.fixtures_odds)}, Picks PRO: {len(self.cached_picks)}")
             else:
                 with self._lock:
@@ -100,7 +116,7 @@ class FixItPRO:
                 print(f"API Error {response.status_code}: {response.text}")
         except Exception as e:
             with self._lock:
-                self.last_updated = "Error Conexión"
+                self.last_updated = f"Error: {str(e)[:20]}"
             print(f"Connection Error: {e}")
 
     def start_scheduler(self):
