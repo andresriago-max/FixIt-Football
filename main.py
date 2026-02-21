@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
-API_KEY = os.getenv("FOOTBALL_API_KEY")
+if API_KEY:
+    API_KEY = API_KEY.strip()
+
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {
-    'x-apisports-key': API_KEY,
-    'x-rapidapi-host': 'v3.football.api-sports.io'
+    'x-apisports-key': API_KEY
 }
 
 # Ligas PRO habilitadas (Mapping API-Sports ID)
@@ -70,16 +71,36 @@ class FixItPRO:
                     self.last_updated = "Error: Falta API KEY"
                 return
 
-            date_today = "2026-02-21" # Salto temporal para Previa del Sábado
+            # Fecha Sábado 21 de Febrero 2026
+            date_today = "2026-02-21"
             url = f"{BASE_URL}/fixtures?date={date_today}"
-            print(f"Consultando fixtures en: {url}")
-            response = requests.get(url, headers=HEADERS, timeout=15)
+
+            print(f"[{datetime.now()}] Iniciando peticion a API-Sports...")
+            print(f"URL: {url}")
+            print(f"Headers (Key length): {len(HEADERS.get('x-apisports-key', ''))}")
             
-            print(f"Respuesta API Fixtures: {response.status_code}")
+            # Timeout (Connect, Read) - Más granular
+            try:
+                response = requests.get(url, headers=HEADERS, timeout=(10, 30))
+                print(f"[{datetime.now()}] Respuesta recibida! Status: {response.status_code}")
+            except Exception as e:
+                print(f"[{datetime.now()}] ERROR CRITICO en requests.get: {e}")
+                with self._lock:
+                    self.last_updated = f"Err: Conexión API"
+                return
+            
             if response.status_code == 200:
                 data = response.json()
+                # Verificar si la API devolvió un mensaje de error en el JSON
+                if data.get('errors'):
+                    print(f"[{datetime.now()}] API devolvió errores: {data['errors']}")
+                    with self._lock:
+                        err_msg = str(next(iter(data['errors'].values()), 'Unknown'))
+                        self.last_updated = f"API ERR: {err_msg[:15]}"
+                    return
+
                 fixtures = data.get('response', [])
-                print(f"Partidos recibidos: {len(fixtures)}")
+                print(f"[{datetime.now()}] Partidos recibidos: {len(fixtures)}")
                 
                 # Filtrar solo ligas habilitadas
                 processed_matches = []
