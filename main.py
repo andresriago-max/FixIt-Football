@@ -60,6 +60,9 @@ class FixItPRO:
         self.session.headers.update(HEADERS)
         self.stats_file = "stats.json"
         self.stats = self.load_stats()
+        # Asegurar que stats tiene la estructura correcta
+        if not isinstance(self.stats, dict): self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}}
+        if 'ligas' not in self.stats or not isinstance(self.stats['ligas'], dict): self.stats['ligas'] = {}
 
     def load_stats(self):
         if os.path.exists(self.stats_file):
@@ -333,17 +336,17 @@ def init_engine():
         threading.Thread(target=engine.fetch_data, daemon=True).start()
         engine.start_scheduler()
 
-# Iniciar si se ejecuta como script
+# Iniciar motor al importar el módulo
+init_engine()
+
 if __name__ == "__main__":
-    init_engine()
-    print(f"[{datetime.now()}] Motor iniciado localmente. Esperando 5s...")
+    print(f"[{datetime.now()}] Motor corriendo en modo manual.")
     time.sleep(5)
 
 def get_stats():
     return engine.stats
 
 def get_top_leagues_rank():
-    return engine.get_top_leagues()
     return engine.get_top_leagues()
 
 def get_all_money_machine_picks():
