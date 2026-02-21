@@ -12,7 +12,8 @@ API_KEY = os.getenv("FOOTBALL_API_KEY")
 print(f"[{datetime.now()}] DEBUG: API_KEY detectada? {'SÍ' if API_KEY else 'NO'}")
 if API_KEY:
     API_KEY = str(API_KEY).strip()
-    print(f"[{datetime.now()}] DEBUG: API_KEY (primeros 4): {API_KEY[:4]}")
+    k_preview = API_KEY[:4] if len(API_KEY) >= 4 else "****"
+    print(f"[{datetime.now()}] DEBUG: API_KEY (primeros 4): {k_preview}")
 
 # Configuración Global
 BASE_URL = "https://v3.football.api-sports.io"
@@ -303,11 +304,16 @@ class FixItPRO:
                     
                     # Nuestra predicción PRO por defecto es Victoria Local
                     if home_goals > away_goals:
-                        self.stats['ganadas'] += 1
-                        self.stats['ligas'][league_name] = self.stats['ligas'].get(league_name, 0) + 1
+                        self.stats['ganadas'] = self.stats.get('ganadas', 0) + 1
+                        
+                        ligas = self.stats.get('ligas', {})
+                        if not isinstance(ligas, dict): ligas = {}
+                        
+                        ligas[league_name] = ligas.get(league_name, 0) + 1
+                        self.stats['ligas'] = ligas
                         cambios = True
                     else:
-                        self.stats['perdidas'] += 1
+                        self.stats['perdidas'] = self.stats.get('perdidas', 0) + 1
                         cambios = True
         
         if cambios:
@@ -320,16 +326,24 @@ class FixItPRO:
             return sorted_ligas[:3]
 
 engine = FixItPRO()
-engine.stats = engine.load_stats()
-# Hilo de carga inicial
-import threading
-threading.Thread(target=engine.fetch_data, daemon=True).start()
-engine.start_scheduler()
+
+def init_engine():
+    """Inicialización única del motor para evitar duplicación de hilos."""
+    if not engine.matches:
+        threading.Thread(target=engine.fetch_data, daemon=True).start()
+        engine.start_scheduler()
+
+# Iniciar si se ejecuta como script
+if __name__ == "__main__":
+    init_engine()
+    print(f"[{datetime.now()}] Motor iniciado localmente. Esperando 5s...")
+    time.sleep(5)
 
 def get_stats():
     return engine.stats
 
 def get_top_leagues_rank():
+    return engine.get_top_leagues()
     return engine.get_top_leagues()
 
 def get_all_money_machine_picks():
