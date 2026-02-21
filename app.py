@@ -16,9 +16,11 @@ def test_api():
     """Ruta para forzar sincronización y ver logs directos en el navegador."""
     try:
         from main import engine
-        main.engine.fetch_data()
-        return f"OK: Sincronización terminada. Estado final: {main.engine.last_updated}"
+        print(">>> TEST-API: Iniciando sincronización forzada...")
+        engine.fetch_data()
+        return f"OK: Sincronización terminada. Estado final: {engine.last_updated}"
     except Exception as e:
+        print(f">>> TEST-API: ERROR: {e}")
         return f"ERROR: {str(e)}"
 
 @app.route('/')

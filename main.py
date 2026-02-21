@@ -18,9 +18,9 @@ if API_KEY:
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {
     'x-apisports-key': API_KEY,
-    'x-rapidapi-host': 'v3.football.api-sports.io' # Re-añadido por seguridad de routing
+    'x-rapidapi-host': 'v3.football.api-sports.io',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
-session = requests.Session()
 
 # Ligas PRO habilitadas (Mapping API-Sports ID)
 # 140: La Liga, 39: Premier League, 135: Serie A, 78: Bundesliga, 61: Ligue 1, 94: Primeira Liga, 88: Eredivisie
@@ -55,6 +55,8 @@ class FixItPRO:
         self.cached_picks = []
         self.last_updated: str = "Iniciando Motor PRO..."
         self._lock = threading.RLock()
+        self.session = requests.Session()
+        self.session.headers.update(HEADERS)
         self.stats_file = "stats.json"
         self.stats = self.load_stats()
 
@@ -87,25 +89,31 @@ class FixItPRO:
             k_len = len(str(HEADERS.get('x-apisports-key', '')))
             print(f"Headers (Key length): {k_len}")
             
-            # Timeout (Connect, Read) - Configuración agresiva para Render
+            # Timeout y Petición - Sin bloqueo en el log para evitar deadlocks
             try:
-                with self._lock: self.last_updated = "Solicitando partidos..."
-                print(f"[{datetime.now()}] >>> GET Fixtures en {url}...")
-                response = session.get(url, headers=HEADERS, timeout=(5, 10))
-                print(f"[{datetime.now()}] API-Fixtures OK! Status: {response.status_code}")
+                self.last_updated = "Solicitando partidos..."
+                print(f"[{datetime.now()}] >>> EJECUTANDO GET: {url}")
+                
+                response = self.session.get(url, timeout=(5, 10))
+                
+                print(f"[{datetime.now()}] >>> RESPUESTA RECIBIDA: {response.status_code}")
+                if response.status_code != 200:
+                    print(f"[{datetime.now()}] ERROR API {response.status_code}: {response.text}")
+                    self.last_updated = f"API ERR: {response.status_code}"
+                    return
             except Exception as e:
-                print(f"[{datetime.now()}] ERROR EN REQUEST: {e}")
-                with self._lock: self.last_updated = "Err: Conexión"
+                print(f"[{datetime.now()}] >>> FALLO CONEXIÓN API: {e}")
+                self.last_updated = "Err: Conexión"
                 return
             
-            if response.status_code == 200:
+            # Procesar JSON
+            try:
                 data = response.json()
                 if data.get('errors'):
                     errs = data['errors']
-                    print(f"[{datetime.now()}] API devolvió errores: {errs}")
-                    with self._lock: 
-                        first_err = str(next(iter(errs.values()), "Unknown"))
-                        self.last_updated = f"API ERR: {first_err[:12]}"
+                    print(f"[{datetime.now()}] >>> API ERRORS JSON: {errs}")
+                    first_err = str(next(iter(errs.values()), "Unknown"))
+                    self.last_updated = f"API ERR: {first_err[:12]}"
                     return
 
                 fixtures = data.get('response', [])
@@ -113,10 +121,9 @@ class FixItPRO:
                 
                 with self._lock:
                     self.matches = processed_matches
-                    # FEEDBACK INMEDIATO AL USUARIO
                     self.last_updated = datetime.now().strftime("%H:%M") + "..."
                 
-                print(f"[{datetime.now()}] Ligas PRO filtradas: {len(processed_matches)}. Procesando picks...")
+                print(f"[{datetime.now()}] >>> PARTIDOS LISTOS: {len(processed_matches)}. Procesando picks...")
                 
                 if processed_matches:
                     self.fetch_odds(date_today)
@@ -127,7 +134,10 @@ class FixItPRO:
                     self.cached_picks = self.process_top_8()
                     self.update_stats_from_results()
                     self.last_updated = datetime.now().strftime("%H:%M")
-                    print(f"[{datetime.now()}] SINCRO FINALIZADA. Picks PRO: {len(self.cached_picks)}")
+                    print(f"[{datetime.now()}] >>> SINCRO COMPLETADA OK <<<")
+            except Exception as e:
+                print(f"[{datetime.now()}] >>> ERROR PROCESANDO DATOS: {e}")
+                self.last_updated = "Err: Datos"
             else:
                 with self._lock:
                     self.last_updated = f"API ERR: {response.status_code}"
@@ -189,7 +199,7 @@ class FixItPRO:
                 count += 1
                 if count % 5 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/40...")
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
-                response = session.get(url, headers=HEADERS, timeout=7)
+                response = self.session.get(url, timeout=7)
                 if response.status_code == 200:
                     data = response.json()
                     res = data.get('response', [])
