@@ -1,5 +1,22 @@
 {
-    "ganadas": 0,
-    "perdidas": 0,
-    "ligas": {}
+    "ganadas": 50,
+    "perdidas": 60,
+    "ligas": {
+        "2. Bundesliga": 4,
+        "Championship": 3,
+        "Ligue 2": 2,
+        "Serie B": 3,
+        "Bundesliga": 2,
+        "Liga Argentina": 1,
+        "La Liga 2": 2,
+        "Liga Portugal": 7,
+        "La Liga": 2,
+        "Eredivisie": 2,
+        "Liga Colombia": 6,
+        "Premier League": 1,
+        "Ligue 1": 1,
+        "MLS": 5,
+        "Liga MX": 1,
+        "Serie A": 8
+    }
 }

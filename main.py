@@ -7,13 +7,15 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
-print(f"[{datetime.now()}] >>> CARGANDO MAIN.PY (Versión Diagnóstico 10:35) <<<")
+print(f"[{datetime.now()}] >>> CARGANDO MOTOR FIXIT PRO <<<")
 API_KEY = os.getenv("FOOTBALL_API_KEY")
-print(f"[{datetime.now()}] DEBUG: API_KEY detectada? {'SÍ' if API_KEY else 'NO'}")
-if API_KEY:
+
+if not API_KEY:
+    print(f"[{datetime.now()}] ⚠️ WARNING: FOOTBALL_API_KEY no detectada en .env ni variables de entorno.")
+else:
     API_KEY = str(API_KEY).strip()
     k_preview = API_KEY[:4] if len(API_KEY) >= 4 else "****"
-    print(f"[{datetime.now()}] DEBUG: API_KEY (primeros 4): {k_preview}")
+    print(f"[{datetime.now()}] ✅ API_KEY detectada (Inicio: {k_preview})")
 
 # Configuración Global
 BASE_URL = "https://v3.football.api-sports.io"
@@ -44,7 +46,9 @@ ENABLED_LEAGUES = {
     71: 'Serie A Brasil',
     239: 'Liga Colombia',
     2: 'Champions League',
-    3: 'Europa League'
+    3: 'Europa League',
+    179: 'Liga Argentina',
+    144: 'Premiership Escocia'
 }
 
 class FixItPRO:
@@ -84,8 +88,9 @@ class FixItPRO:
                     self.last_updated = "Error: Falta API KEY"
                 return
 
-            # Fecha Sábado 21 de Febrero 2026
-            date_today = "2026-02-21"
+            # Fecha: mañana en zona horaria de España (CET/CEST)
+            tz_spain = timezone(timedelta(hours=1))
+            date_today = (datetime.now(tz_spain) + timedelta(days=1)).strftime("%Y-%m-%d")
             url = f"{BASE_URL}/fixtures?date={date_today}"
 
             print(f"[{datetime.now()}] Iniciando peticion a API-Sports...")
@@ -166,28 +171,48 @@ class FixItPRO:
         thread.start()
 
     def fetch_odds(self, date):
-        """Obtiene cuotas reales para los partidos del día."""
+        """Obtiene cuotas para múltiples mercados por partido."""
         try:
             url = f"{BASE_URL}/odds?date={date}"
             response = requests.get(url, headers=HEADERS, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 odds_data = data.get('response', [])
-                new_odds = {}
+                new_odds = {}  # {fixture_id: {market_key: odd_float}}
+
+                # Mercados que nos interesan:
+                # 1 = Match Winner, 2 = Double Chance, 5 = Goals Over/Under, 8 = Both Teams Score
+                TARGET_BETS = {1, 2, 5, 8}
+
                 for item in odds_data:
                     f_id = item['fixture']['id']
-                    # Buscamos cuotas de Match Winner (id: 1) en Bet365 (id: 8) o el primero disponible
                     bookmakers = item.get('bookmakers', [])
                     if not bookmakers: continue
-                    
-                    # Preferencia Bet365 o el primero que tenga cuotas
+
+                    # Preferencia Bet365 (id:8) o el primero disponible
                     bm = next((b for b in bookmakers if b['id'] == 8), bookmakers[0])
+                    markets = {}
+
                     for bet in bm.get('bets', []):
-                        if bet['id'] == 1: # Match Winner
-                            for val in bet.get('values', []):
-                                if val['value'] == 'Home':
-                                    new_odds[f_id] = float(val['odd'])
-                
+                        bid = bet['id']
+                        if bid not in TARGET_BETS: continue
+                        for val in bet.get('values', []):
+                            odd = float(val['odd'])
+                            v = val['value']
+                            if bid == 1 and v == 'Home':
+                                markets['home_win'] = odd
+                            elif bid == 1 and v == 'Away':
+                                markets['away_win'] = odd
+                            elif bid == 2 and v == '1X':   # Local no pierde
+                                markets['double_1x'] = odd
+                            elif bid == 5 and v == 'Over 2.5':
+                                markets['over25'] = odd
+                            elif bid == 8 and v == 'Yes':  # Ambos marcan
+                                markets['btts'] = odd
+
+                    if markets:
+                        new_odds[f_id] = markets
+
                 with self._lock:
                     self.fixtures_odds = new_odds
         except Exception as e:
@@ -198,10 +223,10 @@ class FixItPRO:
         new_preds = {}
         new_advice = {}
         count = 0
-        for f_id in fixtures_ids[:40]:
+        for f_id in fixtures_ids[:60]:
             try:
                 count += 1
-                if count % 5 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/40...")
+                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/60...")
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
                 response = self.session.get(url, timeout=7)
                 if response.status_code == 200:
@@ -225,73 +250,93 @@ class FixItPRO:
             self.fixtures_advice = new_advice
 
     def process_top_8(self):
-        """Selecciona partidos con probabilidad real (Nativa o Matemática) >=40%."""
+        """Selecciona el mejor mercado por partido con probabilidad >=40%."""
         picks = []
+        seen_fixtures = set()  # evitar duplicar el mismo partido
         with self._lock:
             matches_snapshot = list(self.matches)
             odds_snapshot = dict(self.fixtures_odds)
             preds_snapshot = dict(self.fixtures_predictions)
             advice_snapshot = dict(self.fixtures_advice)
-        
+
+        # Configuración de mercados: (market_key, label, icon, color)
+        MARKET_META = {
+            'home_win':   ('Victoria Local',    'fa-shield-halved', '#10b981'),
+            'away_win':   ('Victoria Visitante', 'fa-plane',         '#6366f1'),
+            'double_1x':  ('Doble Oportunidad', 'fa-arrows-split-up-and-left', '#f59e0b'),
+            'btts':       ('Ambos Marcan',       'fa-futbol',        '#ec4899'),
+            'over25':     ('Más de 2.5 Goles',   'fa-fire',          '#ef4444'),
+        }
+
         # España CET
         tz_spain = timezone(timedelta(hours=1))
-        # Salto Temporal: Simular que "hoy" es Sábado 21
-        today_str = "2026-02-21"
-        tomorrow_str = "2026-02-22"
+        now_spain = datetime.now(tz_spain)
+        today_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")  # mañana
+        tomorrow_str = (now_spain + timedelta(days=2)).strftime("%Y-%m-%d")
 
         for m in matches_snapshot:
             f_id = m['fixture']['id']
-            
-            # 1. Prioridad: Predicción Nativa de la API
-            native_prob = preds_snapshot.get(f_id)
-            
-            # 2. Respaldo: Cálculo matemático 1/cuota
-            real_odd = odds_snapshot.get(f_id)
-            calc_prob = int(100 / real_odd) if real_odd else 0
-            
-            # 3. Justificación
-            advice = advice_snapshot.get(f_id, "Datos Estadísticos Oficiales")
 
-            # La probabilidad final es la nativa si existe, si no la calculada
-            prob = native_prob if native_prob else calc_prob
-            
-            # Si no hay ni cuota ni predicción, saltamos
-            if prob == 0: continue
-            
-            # Filtro Final PRO: Mínimo 40%
-            if prob < 40: continue
-
-            # Filtro de horario: Hoy España o Madrugada de Mañana (hasta las 07:00 AM)
-            # Esto captura partidos de Colombia que ocurren en la madrugada de España
+            # Filtro de horario
             utc_time = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z")
             match_spain = utc_time.astimezone(tz_spain)
             match_date = match_spain.strftime("%Y-%m-%d")
             match_hour = match_spain.hour
-
             is_valid_time = (match_date == today_str) or (match_date == tomorrow_str and match_hour < 7)
             if not is_valid_time: continue
 
+            advice = advice_snapshot.get(f_id, "Datos Estadísticos Oficiales")
             league = ENABLED_LEAGUES.get(m['league']['id'], m['league']['name'])
             home = m['teams']['home']['name']
             away = m['teams']['away']['name']
             time_str = match_spain.strftime("%H:%M")
+            markets_for_fixture = odds_snapshot.get(f_id, {})
 
-            picks.append({
-                'id': f_id,
-                'teams': f"{home} vs {away}",
-                'league': league,
-                'market': "Victoria Local",
-                'description': advice,
-                'prob': prob,
-                'odds': real_odd,
-                'date': "21-02-2026",
-                'time': time_str,
-                'icon': 'fa-shield-halved',
-                'color': '#10b981'
-            })
+            # Evaluar todos los mercados disponibles para este partido
+            candidates = []
+
+            for market_key, (label, icon, color) in MARKET_META.items():
+                odd = markets_for_fixture.get(market_key)
+                native = preds_snapshot.get(f_id) if market_key == 'home_win' else None
+
+                # Necesitamos al menos cuota o predicción nativa
+                if not odd and not native: continue
+
+                # Probabilidad: nativa si disponible (home_win), si no 1/cuota
+                if market_key == 'home_win' and native:
+                    prob = native
+                elif odd and odd > 0:
+                    prob = int(round(100 / odd))
+                else:
+                    continue  # sin datos suficientes
+
+                if prob < 40: continue  # Umbral mínimo de confianza
+
+                candidates.append({
+                    'id': f_id,
+                    'teams': f"{home} vs {away}",
+                    'league': league,
+                    'market': label,
+                    'description': advice,
+                    'prob': prob,
+                    'odds': odd,
+                    'date': match_spain.strftime("%d-%m-%Y"),
+                    'time': time_str,
+                    'icon': icon,
+                    'color': color,
+                })
+
+            if not candidates: continue
+
+            # Elegir el mercado con mayor probabilidad para este partido
+            best = max(candidates, key=lambda x: x['prob'])
+
+            if f_id not in seen_fixtures:
+                picks.append(best)
+                seen_fixtures.add(f_id)
+
             if len(picks) >= 20: break
-            
-        # Ordenar picks por probabilidad descendente (el más seguro arriba) y limitar a 20
+
         picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
         return picks[:20]
 
@@ -331,10 +376,12 @@ class FixItPRO:
 engine = FixItPRO()
 
 def init_engine():
-    """Inicialización única del motor para evitar duplicación de hilos."""
-    if not engine.matches:
-        threading.Thread(target=engine.fetch_data, daemon=True).start()
-        engine.start_scheduler()
+    """Inicialización única del motor. Seguro para múltiples workers."""
+    with engine._lock:
+        if not engine.matches and "Iniciando" in engine.last_updated:
+            print(f"[{datetime.now()}] >>> INICIALIZANDO SOLICITUD DE DATOS INICIAL <<<")
+            threading.Thread(target=engine.fetch_data, daemon=True).start()
+            engine.start_scheduler()
 
 # Iniciar motor al importar el módulo
 init_engine()

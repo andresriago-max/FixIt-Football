@@ -23,6 +23,36 @@ def test_api():
         print(f">>> TEST-API: ERROR: {e}")
         return f"ERROR: {str(e)}"
 
+@app.route('/debug')
+def debug():
+    from main import engine
+    picks = engine.cached_picks
+    odds_count = len(engine.fixtures_odds)
+    preds_count = len(engine.fixtures_predictions)
+    matches_count = len(engine.matches)
+    lines = [
+        f"<b>Partidos cargados:</b> {matches_count}",
+        f"<b>Cuotas disponibles:</b> {odds_count}",
+        f"<b>Predicciones nativas:</b> {preds_count}",
+        f"<b>Picks en cache:</b> {len(picks)}",
+        f"<b>Último sync:</b> {engine.last_updated}",
+        "<hr>",
+    ]
+    for p in picks:
+        lines.append(f"✅ {p['teams']} | {p['market']} | {p['prob']}% | cuota: {p['odds']}<br>")
+    # Mostrar predicciones disponibles
+    lines.append("<hr><b>Predicciones (primeras 20):</b><br>")
+    for fid, pct in list(engine.fixtures_predictions.items())[:20]:
+        teams = next((f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
+                     for m in engine.matches if m['fixture']['id'] == fid), str(fid))
+        lines.append(f"&nbsp;&nbsp;{teams}: {pct}%<br>")
+    return "<br>".join(lines)
+
+@app.route('/health')
+def health():
+    """Ruta de salud para monitoreo de despliegue."""
+    return {"status": "healthy", "engine_status": main.engine.last_updated}, 200
+
 @app.route('/')
 def index():
     # Obtener el Top picks actual
@@ -35,8 +65,10 @@ def index():
     # Obtener la Cartelera Diaria para el Sidebar
     sidebar_matches = main.get_daily_leagues_matches()
     
-    # Fecha de hoy para comparar
-    hoy_str = "2026-02-21" # Alineado con el Salto Temporal
+    # Fecha de hoy dinámica (España CET)
+    from datetime import timezone, timedelta
+    tz_spain = timezone(timedelta(hours=1))
+    hoy_str = datetime.now(tz_spain).strftime("%Y-%m-%d")
     
     return render_template('index.html', 
                            picks=top_picks, 
