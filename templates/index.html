@@ -759,21 +759,20 @@
                         {% else %}
                         <tr>
                             <td colspan="6" style="padding: 100px; text-align: center;">
-                                {% if last_sync == "Sincronizando..." %}
+                        {% if "Paso" in last_sync or last_sync == "Sincronizando..." %}
                                 <div
                                     style="font-size: 3rem; margin-bottom: 20px; animation: spin-sync 2s linear infinite;">
                                     <i class="fa-solid fa-satellite-dish" style="color: var(--accent);"></i>
                                 </div>
-                                <h2 style="font-weight: 800; margin-bottom: 10px;">Analizando Datos del Satélite</h2>
-                                <p style="color: #64748b;">Consultando cuotas en tiempo real y estadísticas oficiales...
+                                <h2 style="font-weight: 800; margin-bottom: 10px;">{{ last_sync }}</h2>
+                                <p style="color: #64748b;">Analizando cuotas en tiempo real y estadísticas del motor PRO...
                                 </p>
                                 {% else %}
                                 <div style="font-size: 3rem; margin-bottom: 20px; color: #64748b;">
-                                    <i class="fa-solid fa-triangle-exclamation"></i>
+                                    <i class="fa-solid fa-calendar-xmark"></i>
                                 </div>
-                                <h2 style="font-weight: 800; margin-bottom: 10px;">Analizando mercado...</h2>
-                                <p style="color: #64748b;">No hay picks con ventaja estadística clara (>50%) en este
-                                    momento.</p>
+                                <h2 style="font-weight: 800; margin-bottom: 10px;">Cartelera Finalizada</h2>
+                                <p style="color: #64748b;">No hay más picks disponibles con alta probabilidad para hoy.</p>
                                 {% endif %}
                             </td>
                         </tr>
