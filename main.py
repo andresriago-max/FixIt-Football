@@ -378,15 +378,20 @@ class FixItPRO:
 engine = FixItPRO()
 
 def init_engine():
-    """Inicialización única del motor. Seguro para múltiples workers."""
+    """Inicialización única del motor por worker de Gunicorn."""
     with engine._lock:
+        if getattr(engine, '_thread_started', False):
+            return
+        engine._thread_started = True
+        
         if not engine.matches and "Iniciando" in engine.last_updated:
-            print(f"[{datetime.now()}] >>> INICIALIZANDO SOLICITUD DE DATOS INICIAL <<<")
+            print(f"[{datetime.now()}] >>> INICIALIZANDO MOTOR EN WORKER <<<")
             threading.Thread(target=engine.fetch_data, daemon=True).start()
             engine.start_scheduler()
 
-# Iniciar motor al importar el módulo
-init_engine()
+# Ya no iniciamos el motor aquí.
+# init_engine() se llamará desde la primera petición web en app.py.
+
 
 if __name__ == "__main__":
     print(f"[{datetime.now()}] Motor corriendo en modo manual.")
