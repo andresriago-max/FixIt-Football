@@ -11,11 +11,11 @@ print(f"[{datetime.now()}] >>> CARGANDO MOTOR FIXIT PRO <<<")
 API_KEY = os.getenv("FOOTBALL_API_KEY")
 
 if not API_KEY:
-    print(f"[{datetime.now()}] ⚠️ WARNING: FOOTBALL_API_KEY no detectada en .env ni variables de entorno.")
+    print(f"[{datetime.now()}] WARNING: FOOTBALL_API_KEY no detectada en .env ni variables de entorno.")
 else:
     API_KEY = str(API_KEY).strip()
     k_preview = API_KEY[:4] if len(API_KEY) >= 4 else "****"
-    print(f"[{datetime.now()}] ✅ API_KEY detectada (Inicio: {k_preview})")
+    print(f"[{datetime.now()}] OK: API_KEY detectada (Inicio: {k_preview})")
 
 # Configuración Global
 BASE_URL = "https://v3.football.api-sports.io"
@@ -88,20 +88,28 @@ class FixItPRO:
 
             tz_spain = timezone(timedelta(hours=1))
             hoy_str = datetime.now(tz_spain).strftime("%Y-%m-%d")
-            manana_str = (datetime.now(tz_spain) + timedelta(days=1)).strftime("%Y-%m-%d")
 
             # Fase 1: Partidos
             with self._lock: self.last_updated = "Paso 1/4: Buscando partidos..."
             all_fixtures = []
-            for d in [hoy_str, manana_str]:
+            for d in [hoy_str]:
                 url = f"{BASE_URL}/fixtures?date={d}"
-                print(f"[{datetime.now()}] Consultando: {url}")
+                print(f"[{datetime.now()}] Intentando conexión API: {url}")
                 try:
-                    resp = self.session.get(url, timeout=10)
+                    resp = self.session.get(url, timeout=15)
                     if resp.status_code == 200:
-                        all_fixtures.extend(resp.json().get('response', []))
+                        data = resp.json()
+                        errors = data.get('errors')
+                        if errors:
+                            print(f"[{datetime.now()}] API ERROR: {errors}")
+                            with self._lock: self.last_updated = f"API Error: {list(errors.values())[0]}"
+                        all_fixtures.extend(data.get('response', []))
+                    else:
+                        print(f"[{datetime.now()}] Error HTTP {resp.status_code}")
+                        with self._lock: self.last_updated = f"HTTP Error {resp.status_code}"
                 except Exception as e:
-                    print(f"Error cargando partidos para {d}: {e}")
+                    print(f"Error de red/conectividad: {e}")
+                    with self._lock: self.last_updated = f"Error Red: {str(e)[:15]}"
 
             processed = [f for f in all_fixtures if f['league']['id'] in ENABLED_LEAGUES]
             with self._lock:
@@ -115,7 +123,6 @@ class FixItPRO:
             with self._lock: self.last_updated = f"Paso 2/4: Cargando cuotas ({len(processed)} partidos)..."
             # Obtenemos cuotas para hoy y mañana
             self.fetch_odds(hoy_str)
-            self.fetch_odds(manana_str)
 
             # Fase 3: Predicciones
             with self._lock: self.last_updated = f"Paso 3/4: Analizando mercados..."
@@ -163,7 +170,8 @@ class FixItPRO:
 
                 # Mercados que nos interesan:
                 # 1 = Match Winner, 2 = Double Chance, 5 = Goals Over/Under, 8 = Both Teams Score
-                TARGET_BETS = {1, 2, 5, 8}
+                # 30 = Corners Over/Under, 13 = Total Cards
+                TARGET_BETS = {1, 2, 5, 8, 30, 13}
 
                 for item in odds_data:
                     f_id = item['fixture']['id']
@@ -186,10 +194,16 @@ class FixItPRO:
                                 markets['away_win'] = odd
                             elif bid == 2 and v == '1X':   # Local no pierde
                                 markets['double_1x'] = odd
+                            elif bid == 2 and v == 'X2':   # Visitante no pierde
+                                markets['double_x2'] = odd
                             elif bid == 5 and v == 'Over 2.5':
                                 markets['over25'] = odd
                             elif bid == 8 and v == 'Yes':  # Ambos marcan
                                 markets['btts'] = odd
+                            elif bid == 30 and 'Over 9.5' in v:
+                                markets['corner95'] = odd
+                            elif bid == 13 and 'Over 3.5' in v:
+                                markets['cards35'] = odd
 
                     if markets:
                         new_odds[f_id] = markets
@@ -244,16 +258,18 @@ class FixItPRO:
         MARKET_META = {
             'home_win':   ('Victoria Local',    'fa-shield-halved', '#10b981'),
             'away_win':   ('Victoria Visitante', 'fa-plane',         '#6366f1'),
-            'double_1x':  ('Doble Oportunidad', 'fa-arrows-split-up-and-left', '#f59e0b'),
+            'double_1x':  ('Doble Op. (1X)',       'fa-arrows-split-up-and-left', '#f59e0b'),
+            'double_x2':  ('Doble Op. (X2)',       'fa-arrows-split-up-and-left', '#f43f5e'),
             'btts':       ('Ambos Marcan',       'fa-futbol',        '#ec4899'),
             'over25':     ('Más de 2.5 Goles',   'fa-fire',          '#ef4444'),
+            'corner95':   ('+9.5 Córners',       'fa-flag',          '#a855f7'),
+            'cards35':    ('+3.5 Tarjetas',      'fa-square',        '#facc15'),
         }
 
         # España CET
         tz_spain = timezone(timedelta(hours=1))
         now_spain = datetime.now(tz_spain)
-        today_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")  # mañana
-        tomorrow_str = (now_spain + timedelta(days=2)).strftime("%Y-%m-%d")
+        today_str = now_spain.strftime("%Y-%m-%d")
 
         for m in matches_snapshot:
             f_id = m['fixture']['id']
@@ -262,8 +278,7 @@ class FixItPRO:
             utc_time = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z")
             match_spain = utc_time.astimezone(tz_spain)
             match_date = match_spain.strftime("%Y-%m-%d")
-            match_hour = match_spain.hour
-            is_valid_time = (match_date == today_str) or (match_date == tomorrow_str and match_hour < 7)
+            is_valid_time = (match_date == today_str)
             if not is_valid_time: continue
 
             advice = advice_snapshot.get(f_id, "Datos Estadísticos Oficiales")
@@ -291,7 +306,7 @@ class FixItPRO:
                 else:
                     continue  # sin datos suficientes
 
-                if prob < 40: continue  # Umbral mínimo de confianza
+                if prob < 35: continue  # Umbral ajustado para recuperar volumen de picks
 
                 candidates.append({
                     'id': f_id,
