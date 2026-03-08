@@ -101,22 +101,28 @@ class FixItPRO:
                         data = resp.json()
                         errors = data.get('errors')
                         if errors:
-                            print(f"[{datetime.now()}] API ERROR: {errors}")
-                            with self._lock: self.last_updated = f"API Error: {list(errors.values())[0]}"
+                            # Si hay errores (como API Key inválida), detenemos todo aquí
+                            err_msg = str(errors)
+                            print(f"[{datetime.now()}] API ERROR DETECTADO: {err_msg}")
+                            with self._lock: 
+                                self.last_updated = f"Error API: {err_msg[:20]}"
+                            return # Salimos para no sobreescribir el error
+
                         all_fixtures.extend(data.get('response', []))
                     else:
-                        print(f"[{datetime.now()}] Error HTTP {resp.status_code}")
-                        with self._lock: self.last_updated = f"HTTP Error {resp.status_code}"
+                        with self._lock: self.last_updated = f"HTTP {resp.status_code}"
+                        return
                 except Exception as e:
-                    print(f"Error de red/conectividad: {e}")
-                    with self._lock: self.last_updated = f"Error Red: {str(e)[:15]}"
+                    print(f"Error de red: {e}")
+                    with self._lock: self.last_updated = f"Fallo Red: {str(e)[:15]}"
+                    return
 
             processed = [f for f in all_fixtures if f['league']['id'] in ENABLED_LEAGUES]
             with self._lock:
                 self.matches = processed
             
             if not processed:
-                with self._lock: self.last_updated = "No hay partidos hoy/mañana"
+                with self._lock: self.last_updated = "No hay partidos hoy"
                 return
 
             # Fase 2: Cuotas
