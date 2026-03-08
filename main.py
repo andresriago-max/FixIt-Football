@@ -224,10 +224,10 @@ class FixItPRO:
         new_preds = {}
         new_advice = {}
         count = 0
-        for f_id in fixtures_ids[:60]:
+        for f_id in fixtures_ids[:100]:
             try:
                 count += 1
-                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/60...")
+                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/100...")
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
                 response = self.session.get(url, timeout=7)
                 if response.status_code == 200:
@@ -280,12 +280,19 @@ class FixItPRO:
         for m in matches_snapshot:
             f_id = m['fixture']['id']
 
-            # Filtro de horario
+            # Filtro de horario y estado: Solo partidos por jugar
             utc_time = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z")
             match_spain = utc_time.astimezone(tz_spain)
             match_date = match_spain.strftime("%Y-%m-%d")
-            is_valid_time = (match_date == today_str)
-            if not is_valid_time: continue
+            
+            # 1. Que sea hoy (o futuro cercano si hiciéramos fetch de más días)
+            # 2. Que no haya empezado (ahora_spain < match_spain)
+            # 3. Que el status sea 'NS' (Not Started) o 'TBD'
+            status_short = m['fixture']['status']['short']
+            is_upcoming = (match_spain > now_spain) and (status_short in ['NS', 'TBD'])
+            is_valid_date = (match_date == today_str)
+            
+            if not is_valid_date or not is_upcoming: continue
 
             advice = advice_snapshot.get(f_id, "Datos Estadísticos Oficiales")
             league = ENABLED_LEAGUES.get(m['league']['id'], m['league']['name'])
