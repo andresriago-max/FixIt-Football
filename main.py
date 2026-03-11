@@ -227,10 +227,11 @@ class FixItPRO:
         new_preds = {}
         new_advice = {}
         count = 0
-        for f_id in fixtures_ids[:100]:
+        for f_id in fixtures_ids[:75]:
             try:
                 count += 1
-                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/100...")
+                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/75...")
+                time.sleep(0.05) # Pequeño respiro para el worker y la CPU
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
                 response = self.session.get(url, timeout=7)
                 if response.status_code == 200:

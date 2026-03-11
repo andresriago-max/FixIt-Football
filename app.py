@@ -5,10 +5,9 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-@app.before_request
-def initialize():
-    from main import init_engine
-    init_engine()
+# Motor PRO: Inicialización única al cargar el módulo
+from main import init_engine
+init_engine()
 
 @app.template_filter('urlencode')
 def urlencode_filter(s):
