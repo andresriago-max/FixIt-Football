@@ -350,6 +350,8 @@ class FixItPRO:
             if len(picks) >= 20: break
 
         picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
+        return picks[:20]
+
     def update_stats_from_results(self):
         """Analiza partidos finalizados para actualizar el contador de éxitos."""
         cambios = False
