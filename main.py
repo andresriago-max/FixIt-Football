@@ -111,7 +111,9 @@ class FixItPRO:
                                 self.last_updated = f"Error API: {err_msg[:20]}"
                             return # Salimos para no sobreescribir el error
 
-                        all_fixtures.extend(data.get('response', []))
+                        fixtures_found = data.get('response', [])
+                        print(f"[{datetime.now()}] API Response: Found {len(fixtures_found)} total fixtures.")
+                        all_fixtures.extend(fixtures_found)
                     else:
                         with self._lock: self.last_updated = f"HTTP {resp.status_code}"
                         return
@@ -145,10 +147,11 @@ class FixItPRO:
 
             with self._lock:
                 self.last_updated = datetime.now(tz_spain).strftime("%H:%M")
-            print(f"[{datetime.now()}] >>> FETCH COMPLETADO OK <<<")
+            print(f"[{datetime.now()}] >>> FETCH COMPLETADO OK: {len(self.cached_picks)} picks generados <<<")
 
         except Exception as e:
-            print(f"[{datetime.now()}] ERROR CRÍTICO EN FETCH: {e}")
+            import traceback
+            print(f"[{datetime.now()}] ERROR CRÍTICO EN FETCH:\n{traceback.format_exc()}")
             with self._lock:
                 self.last_updated = f"Err: {str(e)[:15]}"
 
