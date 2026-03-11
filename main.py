@@ -65,8 +65,10 @@ class FixItPRO:
         self.stats_file = "stats.json"
         self.stats = self.load_stats()
         # Asegurar que stats tiene la estructura correcta
-        if not isinstance(self.stats, dict): self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}}
+        if not isinstance(self.stats, dict): self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
         if 'ligas' not in self.stats or not isinstance(self.stats['ligas'], dict): self.stats['ligas'] = {}
+        if 'processed_fixtures' not in self.stats: self.stats['processed_fixtures'] = []
+        if 'historial' not in self.stats: self.stats['historial'] = []
 
     def load_stats(self):
         if os.path.exists(self.stats_file):
@@ -87,12 +89,13 @@ class FixItPRO:
                 return
 
             tz_spain = timezone(timedelta(hours=1))
+            ayer_str = (datetime.now(tz_spain) - timedelta(days=1)).strftime("%Y-%m-%d")
             hoy_str = datetime.now(tz_spain).strftime("%Y-%m-%d")
 
             # Fase 1: Partidos
             with self._lock: self.last_updated = "Paso 1/4: Buscando partidos..."
             all_fixtures = []
-            for d in [hoy_str]:
+            for d in [ayer_str, hoy_str]:
                 url = f"{BASE_URL}/fixtures?date={d}"
                 print(f"[{datetime.now()}] Intentando conexión API: {url}")
                 try:
@@ -347,31 +350,59 @@ class FixItPRO:
             if len(picks) >= 20: break
 
         picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
-        return picks[:20]
-
     def update_stats_from_results(self):
         """Analiza partidos finalizados para actualizar el contador de éxitos."""
         cambios = False
         with self._lock:
+            # Asegurar que las listas existan
+            if 'processed_fixtures' not in self.stats: self.stats['processed_fixtures'] = []
+            if 'historial' not in self.stats: self.stats['historial'] = []
+            
+            processed_ids = set(self.stats['processed_fixtures'])
+
             for m in self.matches:
-                if m['fixture']['status']['short'] == 'FT':
+                f_id = m['fixture']['id']
+                
+                # Solo procesar si ha terminado y NO lo hemos procesado antes
+                if m['fixture']['status']['short'] == 'FT' and f_id not in processed_ids:
                     home_goals = m['goals']['home']
                     away_goals = m['goals']['away']
                     league_name = ENABLED_LEAGUES.get(m['league']['id'], m['league']['name'])
+                    teams_name = f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
+                    date_match = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z").strftime("%d/%m/%Y")
                     
-                    # Nuestra predicción PRO por defecto es Victoria Local
+                    # Nuestra predicción PRO por defecto es Victoria Local (Home > Away)
                     if home_goals > away_goals:
                         self.stats['ganadas'] = self.stats.get('ganadas', 0) + 1
                         
                         ligas = self.stats.get('ligas', {})
                         if not isinstance(ligas, dict): ligas = {}
-                        
                         ligas[league_name] = ligas.get(league_name, 0) + 1
                         self.stats['ligas'] = ligas
+                        
+                        # Añadir al historial
+                        nuevo_acierto = {
+                            "fecha": date_match,
+                            "equipos": teams_name,
+                            "liga": league_name,
+                            "resultado": f"{home_goals}-{away_goals}",
+                            "timestamp": time.time()
+                        }
+                        self.stats['historial'].insert(0, nuevo_acierto) # El más reciente primero
+                        # Limitar historial a los últimos 50
+                        self.stats['historial'] = self.stats['historial'][:50]
+                        
                         cambios = True
                     else:
                         self.stats['perdidas'] = self.stats.get('perdidas', 0) + 1
                         cambios = True
+                    
+                    # Marcar como procesado independientemente de si ganó o perdió
+                    self.stats['processed_fixtures'].append(f_id)
+                    processed_ids.add(f_id)
+                    # Limitar processed_fixtures para no crecer infinitamente (últimos 500)
+                    if len(self.stats['processed_fixtures']) > 500:
+                        self.stats['processed_fixtures'] = self.stats['processed_fixtures'][-500:]
         
         if cambios:
             self.save_stats()

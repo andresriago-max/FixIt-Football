@@ -781,8 +781,41 @@
                 </table>
             </div>
 
-    </div>
-    </main>
+            <!-- SECCIÓN DE HISTORIAL DE ACIERTOS -->
+            <div class="section-divider">
+                <h2><i class="fa-solid fa-clock-rotate-left"></i> Historial de Aciertos</h2>
+                <p>Últimos pronósticos PRO acertados por el motor</p>
+            </div>
+
+            <div class="history-grid" style="width: 100%; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; margin-bottom: 50px;">
+                {% if stats.historial %}
+                    {% for item in stats.historial %}
+                    <div class="history-card" style="background: rgba(15, 23, 42, 0.4); border: 1px solid rgba(34, 197, 94, 0.2); border-radius: 20px; padding: 15px; display: flex; align-items: center; gap: 15px; transition: 0.3s; animation: slideIn 0.5s ease-out both;">
+                        <div style="width: 45px; height: 45px; background: rgba(34, 197, 94, 0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #4ade80; font-size: 1.2rem;">
+                            <i class="fa-solid fa-trophy"></i>
+                        </div>
+                        <div style="flex-grow: 1;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <span style="font-size: 0.65rem; font-weight: 800; color: var(--accent); text-transform: uppercase;">{{ item.liga }}</span>
+                                <span style="font-size: 0.6rem; color: #64748b; font-weight: 700;">{{ item.fecha }}</span>
+                            </div>
+                            <div style="font-size: 0.85rem; font-weight: 700; color: #f8fafc; margin-bottom: 2px;">{{ item.equipos }}</div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 0.75rem; color: #4ade80; font-weight: 800;">Resultado: {{ item.resultado }}</span>
+                                <span style="width: 4px; height: 4px; background: #334155; border-radius: 50%;"></span>
+                                <span style="font-size: 0.7rem; color: #94a3b8; font-weight: 600;">Pronóstico Acertado <i class="fa-solid fa-check"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div style="grid-column: 1 / -1; padding: 40px; text-align: center; background: rgba(255, 255, 255, 0.02); border-radius: 24px; border: 1px dashed rgba(255, 255, 255, 0.1);">
+                        <p style="color: #64748b; font-style: italic;">Esperando nuevos resultados finalizados para generar el historial...</p>
+                    </div>
+                {% endif %}
+            </div>
+
+        </main>
     </div>
 
     <script>

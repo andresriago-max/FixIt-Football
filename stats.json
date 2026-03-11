@@ -1,6 +1,6 @@
 {
-    "ganadas": 111,
-    "perdidas": 111,
+    "ganadas": 106,
+    "perdidas": 105,
     "ligas": {
         "2. Bundesliga": 4,
         "Championship": 3,
@@ -10,14 +10,27 @@
         "Liga Argentina": 1,
         "La Liga 2": 2,
         "Liga Portugal": 8,
-        "La Liga": 2,
+        "La Liga": 3,
         "Eredivisie": 2,
         "Liga Colombia": 10,
         "Premier League": 1,
         "Ligue 1": 1,
-        "MLS": 26,
-        "Liga MX": 10,
+        "MLS": 22,
+        "Liga MX": 8,
         "Serie A": 10,
         "Serie A Brasil": 24
-    }
+    },
+    "processed_fixtures": [
+        111,
+        222
+    ],
+    "historial": [
+        {
+            "fecha": "10/03/2024",
+            "equipos": "Real Madrid vs Barcelona",
+            "liga": "La Liga",
+            "resultado": "3-1",
+            "timestamp": 1773244439.8368785
+        }
+    ]
 }
