@@ -71,10 +71,15 @@ class FixItPRO:
         if 'historial' not in self.stats: self.stats['historial'] = []
 
     def load_stats(self):
-        if os.path.exists(self.stats_file):
-            with open(self.stats_file, 'r') as f:
-                return json.load(f)
-        return {"ganadas": 0, "perdidas": 0, "ligas": {}}
+        try:
+            if os.path.exists(self.stats_file):
+                with open(self.stats_file, 'r') as f:
+                    content = f.read().strip()
+                    if not content: return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
+                    return json.loads(content)
+        except Exception as e:
+            print(f"[{datetime.now()}] Warning: No se pudo cargar stats.json ({e}). Usando valores por defecto.")
+        return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
 
     def save_stats(self):
         with open(self.stats_file, 'w') as f:
