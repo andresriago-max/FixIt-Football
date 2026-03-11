@@ -94,45 +94,48 @@ class FixItPRO:
 
             import pytz
             tz_spain = pytz.timezone('Europe/Madrid')
-            hoy_str = datetime.now(tz_spain).strftime("%Y-%m-%d")
-            print(f"[{datetime.now()}] Fecha objetivo (España): {hoy_str}")
+            now_spain = datetime.now(tz_spain)
+            hoy_str = now_spain.strftime("%Y-%m-%d")
+            manana_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
+            print(f"[{datetime.now()}] Fechas objetivo (España): {hoy_str}, {manana_str}")
 
             # Fase 1: Partidos
             with self._lock: self.last_updated = "Paso 1/4: Conectando API..."
             all_fixtures = []
             
-            url = f"{BASE_URL}/fixtures?date={hoy_str}"
-            print(f"[{datetime.now()}] Requesting fixtures: {url}")
-            
-            try:
-                resp = self.session.get(url, timeout=20)
-                print(f"[{datetime.now()}] API Response Status: {resp.status_code}")
+            for d in [hoy_str, manana_str]:
+                url = f"{BASE_URL}/fixtures?date={d}"
+                print(f"[{datetime.now()}] Requesting fixtures: {url}")
                 
-                if resp.status_code == 200:
-                    with self._lock: self.last_updated = "Paso 1/4: Procesando datos..."
-                    data = resp.json()
-                    errors = data.get('errors')
-                    if errors:
-                        err_msg = str(errors)
-                        print(f"[{datetime.now()}] API ERROR: {err_msg}")
-                        with self._lock: self.last_updated = f"API Err: {err_msg[:15]}"
-                        return
+                try:
+                    resp = self.session.get(url, timeout=20)
+                    print(f"[{datetime.now()}] API Response Status: {resp.status_code}")
+                    
+                    if resp.status_code == 200:
+                        with self._lock: self.last_updated = "Paso 1/4: Procesando datos..."
+                        data = resp.json()
+                        errors = data.get('errors')
+                        if errors:
+                            err_msg = str(errors)
+                            print(f"[{datetime.now()}] API ERROR: {err_msg}")
+                            with self._lock: self.last_updated = f"API Err: {err_msg[:15]}"
+                            return
 
-                    fixtures_found = data.get('response', [])
-                    print(f"[{datetime.now()}] Found {len(fixtures_found)} total fixtures.")
-                    all_fixtures.extend(fixtures_found)
-                else:
-                    with self._lock: self.last_updated = f"HTTP {resp.status_code}"
-                    print(f"[{datetime.now()}] Non-200 response: {resp.text[:200]}")
+                        fixtures_found = data.get('response', [])
+                        print(f"[{datetime.now()}] Found {len(fixtures_found)} total fixtures for {d}.")
+                        all_fixtures.extend(fixtures_found)
+                    else:
+                        with self._lock: self.last_updated = f"HTTP {resp.status_code}"
+                        print(f"[{datetime.now()}] Non-200 response: {resp.text[:200]}")
+                        return
+                except requests.Timeout:
+                    with self._lock: self.last_updated = "Error: API Lenta"
+                    print(f"[{datetime.now()}] Timeout en Fase 1 para {d}")
                     return
-            except requests.Timeout:
-                with self._lock: self.last_updated = "Error: API Lenta"
-                print(f"[{datetime.now()}] Timeout en Fase 1")
-                return
-            except Exception as e:
-                with self._lock: self.last_updated = "Error Conexión"
-                print(f"[{datetime.now()}] Error en Fase 1: {e}")
-                return
+                except Exception as e:
+                    with self._lock: self.last_updated = "Error Conexión"
+                    print(f"[{datetime.now()}] Error en Fase 1 para {d}: {e}")
+                    return
 
             processed = [f for f in all_fixtures if f['league']['id'] in ENABLED_LEAGUES]
             print(f"[{datetime.now()}] Processed {len(processed)} matches after league filter.")
@@ -141,12 +144,12 @@ class FixItPRO:
                 self.matches = processed
             
             if not processed:
-                with self._lock: self.last_updated = "Hoy sin partidos PRO"
+                with self._lock: self.last_updated = "No hay partidos PRO"
                 return
 
             # Fase 2: Cuotas
             with self._lock: self.last_updated = f"Paso 2/4: Cargando cuotas ({len(processed)})..."
-            self.fetch_odds(hoy_str)
+            self.fetch_odds([hoy_str, manana_str])
 
             # Fase 3: Predicciones
             with self._lock: self.last_updated = "Paso 3/4: Analizando mercados..."
@@ -182,58 +185,59 @@ class FixItPRO:
         thread = threading.Thread(target=run_loop, daemon=True)
         thread.start()
 
-    def fetch_odds(self, date):
+    def fetch_odds(self, dates):
         """Obtiene cuotas para múltiples mercados por partido."""
         try:
-            url = f"{BASE_URL}/odds?date={date}"
-            response = requests.get(url, headers=HEADERS, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                odds_data = data.get('response', [])
-                new_odds = {}  # {fixture_id: {market_key: odd_float}}
+            new_odds = {}  # {fixture_id: {market_key: odd_float}}
+            for date in dates:
+                url = f"{BASE_URL}/odds?date={date}"
+                response = requests.get(url, headers=HEADERS, timeout=15)
+                if response.status_code == 200:
+                    data = response.json()
+                    odds_data = data.get('response', [])
 
-                # Mercados que nos interesan:
-                # 1 = Match Winner, 2 = Double Chance, 5 = Goals Over/Under, 8 = Both Teams Score
-                # 30 = Corners Over/Under, 13 = Total Cards
-                TARGET_BETS = {1, 2, 5, 8, 30, 13}
+                    # Mercados que nos interesan:
+                    # 1 = Match Winner, 2 = Double Chance, 5 = Goals Over/Under, 8 = Both Teams Score
+                    # 30 = Corners Over/Under, 13 = Total Cards
+                    TARGET_BETS = {1, 2, 5, 8, 30, 13}
 
-                for item in odds_data:
-                    f_id = item['fixture']['id']
-                    bookmakers = item.get('bookmakers', [])
-                    if not bookmakers: continue
+                    for item in odds_data:
+                        f_id = item['fixture']['id']
+                        bookmakers = item.get('bookmakers', [])
+                        if not bookmakers: continue
 
-                    # Preferencia Bet365 (id:8) o el primero disponible
-                    bm = next((b for b in bookmakers if b['id'] == 8), bookmakers[0])
-                    markets = {}
+                        # Preferencia Bet365 (id:8) o el primero disponible
+                        bm = next((b for b in bookmakers if b['id'] == 8), bookmakers[0])
+                        markets = {}
 
-                    for bet in bm.get('bets', []):
-                        bid = bet['id']
-                        if bid not in TARGET_BETS: continue
-                        for val in bet.get('values', []):
-                            odd = float(val['odd'])
-                            v = val['value']
-                            if bid == 1 and v == 'Home':
-                                markets['home_win'] = odd
-                            elif bid == 1 and v == 'Away':
-                                markets['away_win'] = odd
-                            elif bid == 2 and v == '1X':   # Local no pierde
-                                markets['double_1x'] = odd
-                            elif bid == 2 and v == 'X2':   # Visitante no pierde
-                                markets['double_x2'] = odd
-                            elif bid == 5 and v == 'Over 2.5':
-                                markets['over25'] = odd
-                            elif bid == 8 and v == 'Yes':  # Ambos marcan
-                                markets['btts'] = odd
-                            elif bid == 30 and 'Over 9.5' in v:
-                                markets['corner95'] = odd
-                            elif bid == 13 and 'Over 3.5' in v:
-                                markets['cards35'] = odd
+                        for bet in bm.get('bets', []):
+                            bid = bet['id']
+                            if bid not in TARGET_BETS: continue
+                            for val in bet.get('values', []):
+                                odd = float(val['odd'])
+                                v = val['value']
+                                if bid == 1 and v == 'Home':
+                                    markets['home_win'] = odd
+                                elif bid == 1 and v == 'Away':
+                                    markets['away_win'] = odd
+                                elif bid == 2 and v == '1X':   # Local no pierde
+                                    markets['double_1x'] = odd
+                                elif bid == 2 and v == 'X2':   # Visitante no pierde
+                                    markets['double_x2'] = odd
+                                elif bid == 5 and v == 'Over 2.5':
+                                    markets['over25'] = odd
+                                elif bid == 8 and v == 'Yes':  # Ambos marcan
+                                    markets['btts'] = odd
+                                elif bid == 30 and 'Over 9.5' in v:
+                                    markets['corner95'] = odd
+                                elif bid == 13 and 'Over 3.5' in v:
+                                    markets['cards35'] = odd
 
-                    if markets:
-                        new_odds[f_id] = markets
+                        if markets:
+                            new_odds[f_id] = markets
 
-                with self._lock:
-                    self.fixtures_odds = new_odds
+            with self._lock:
+                self.fixtures_odds = new_odds
         except Exception as e:
             print(f"Error fetching odds: {e}")
 
@@ -292,9 +296,12 @@ class FixItPRO:
         }
 
         # España CET
-        tz_spain = timezone(timedelta(hours=1))
+        import pytz
+        tz_spain = pytz.timezone('Europe/Madrid')
         now_spain = datetime.now(tz_spain)
         today_str = now_spain.strftime("%Y-%m-%d")
+        tomorrow_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
+        valid_dates = [today_str, tomorrow_str]
 
         for m in matches_snapshot:
             f_id = m['fixture']['id']
@@ -304,12 +311,12 @@ class FixItPRO:
             match_spain = utc_time.astimezone(tz_spain)
             match_date = match_spain.strftime("%Y-%m-%d")
             
-            # 1. Que sea hoy (o futuro cercano si hiciéramos fetch de más días)
+            # 1. Que sea hoy o mañana
             # 2. Que no haya empezado (ahora_spain < match_spain)
             # 3. Que el status sea 'NS' (Not Started) o 'TBD'
             status_short = m['fixture']['status']['short']
             is_upcoming = (match_spain > now_spain) and (status_short in ['NS', 'TBD'])
-            is_valid_date = (match_date == today_str)
+            is_valid_date = (match_date in valid_dates)
             
             if not is_valid_date or not is_upcoming: continue
 
