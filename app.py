@@ -22,10 +22,23 @@ def debug():
     key = os.getenv("FOOTBALL_API_KEY")
     return {
         "api_key_detected": "SI" if key else "NO",
+        "api_key_preview": key[:4] if key and len(key) >= 4 else "????",
         "engine_status": engine.last_updated,
         "picks_count": len(engine.cached_picks),
-        "matches_count": len(engine.matches)
+        "matches_count": len(engine.matches),
+        "thread_started": getattr(engine, '_thread_started', False)
     }
+
+@app.route('/sync')
+def sync():
+    """Fuerza una sincronización inmediata del motor."""
+    import threading
+    from main import engine
+    # Solo lanzar un nuevo hilo si no hay uno activo
+    with engine._lock:
+        engine.last_updated = "Sincronizando manualmente..."
+    threading.Thread(target=engine.fetch_data, daemon=True).start()
+    return {"status": "Sincronización iniciada", "message": "Abriendo página principal en 30 segundos..."}
 
 @app.route('/test-api')
 def test_api():

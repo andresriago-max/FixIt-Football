@@ -583,7 +583,7 @@
 <body>
     <div class="header">
         <h1>FIXIT FOOTBALL</h1>
-        <div class="status-badge">
+        <div class="status-badge" id="statusBadge">
             <div class="status-dot"></div>
             {% if last_sync %}
             Sincronizado PRO: {{ last_sync }}
@@ -591,6 +591,9 @@
             Sincronizando...
             {% endif %}
         </div>
+        <button id="syncBtn" onclick="forceSync()" style="margin-top:10px; background:rgba(34,211,238,0.15); color:var(--accent); border:1px solid var(--accent); border-radius:99px; padding:6px 18px; font-size:0.8rem; font-weight:700; cursor:pointer; text-transform:uppercase; letter-spacing:1px;">
+            <i class="fa-solid fa-rotate"></i> Sincronizar Ahora
+        </button>
     </div>
 
 
@@ -818,23 +821,31 @@
         </main>
     </div>
 
-    <script>
-        function copyPick(teams, market, prob, odds, description) {
-            const text = `🏆 *FIXIT FOOTBALL PRO*\n\n⚽ Partido: ${teams}\n🎯 Pronóstico: ${market}\n📊 Cuota: ${odds}\n📈 Confianza: ${prob}%\n\n🔬 Justificación: ${description}\n\n📊 _Datos Estadísticos Oficiales_`;
+     <script>
+        function copyPick(teams, market, prob, odd, desc) {
+            const text = `💰 *TOP PICK FIXIT PRO*\n\n⚽ ${teams}\n🎯 ${market}\n📊 Cuota: ${odd}\n📈 Confianza: ${prob}%\n\n🔬 ${desc}`;
             navigator.clipboard.writeText(text).then(() => {
-                const btn = window.event ? window.event.currentTarget : null;
-                if (!btn) return;
-                const originalContent = btn.innerHTML;
-                btn.innerHTML = '<i class="fa-solid fa-check"></i>';
-                btn.style.color = '#4ade80';
-                btn.style.borderColor = '#4ade80';
-
-                setTimeout(() => {
-                    btn.innerHTML = originalContent;
-                    btn.style.color = '';
-                    btn.style.borderColor = '';
-                }, 2000);
+                alert('Prono copiado al portapapeles');
             });
+        }
+
+        function forceSync() {
+            const btn = document.getElementById('syncBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sincronizando...';
+            fetch('/sync')
+                .then(() => {
+                    setTimeout(() => window.location.reload(), 30000);
+                })
+                .catch(() => window.location.reload());
+        }
+
+        // Auto-refresh si el motor sigue cargando
+        const lastSync = "{{ last_sync }}";
+        if (lastSync.includes("Paso") || lastSync.includes("Sincronizando") || lastSync.includes("Iniciando") || lastSync.includes("Motor PRO")) {
+            setTimeout(() => {
+                window.location.reload();
+            }, 10000);
         }
     </script>
 
