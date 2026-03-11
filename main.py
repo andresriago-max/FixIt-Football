@@ -79,7 +79,6 @@ class FixItPRO:
     def save_stats(self):
         with open(self.stats_file, 'w') as f:
             json.dump(self.stats, f, indent=4)
-
     def fetch_data(self):
         """Coordinador: partidos -> cuotas -> predicciones -> picks."""
         try:
@@ -88,72 +87,80 @@ class FixItPRO:
                 with self._lock: self.last_updated = "Error: Falta API KEY"
                 return
 
-            tz_spain = timezone(timedelta(hours=1))
-            ayer_str = (datetime.now(tz_spain) - timedelta(days=1)).strftime("%Y-%m-%d")
+            import pytz
+            tz_spain = pytz.timezone('Europe/Madrid')
             hoy_str = datetime.now(tz_spain).strftime("%Y-%m-%d")
+            print(f"[{datetime.now()}] Fecha objetivo (España): {hoy_str}")
 
             # Fase 1: Partidos
-            with self._lock: self.last_updated = "Paso 1/4: Buscando partidos..."
+            with self._lock: self.last_updated = "Paso 1/4: Conectando API..."
             all_fixtures = []
-            for d in [ayer_str, hoy_str]:
-                url = f"{BASE_URL}/fixtures?date={d}"
-                print(f"[{datetime.now()}] Intentando conexión API: {url}")
-                try:
-                    resp = self.session.get(url, timeout=15)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        errors = data.get('errors')
-                        if errors:
-                            # Si hay errores (como API Key inválida), detenemos todo aquí
-                            err_msg = str(errors)
-                            print(f"[{datetime.now()}] API ERROR DETECTADO: {err_msg}")
-                            with self._lock: 
-                                self.last_updated = f"Error API: {err_msg[:20]}"
-                            return # Salimos para no sobreescribir el error
-
-                        fixtures_found = data.get('response', [])
-                        print(f"[{datetime.now()}] API Response: Found {len(fixtures_found)} total fixtures.")
-                        all_fixtures.extend(fixtures_found)
-                    else:
-                        with self._lock: self.last_updated = f"HTTP {resp.status_code}"
+            
+            url = f"{BASE_URL}/fixtures?date={hoy_str}"
+            print(f"[{datetime.now()}] Requesting fixtures: {url}")
+            
+            try:
+                resp = self.session.get(url, timeout=20)
+                print(f"[{datetime.now()}] API Response Status: {resp.status_code}")
+                
+                if resp.status_code == 200:
+                    with self._lock: self.last_updated = "Paso 1/4: Procesando datos..."
+                    data = resp.json()
+                    errors = data.get('errors')
+                    if errors:
+                        err_msg = str(errors)
+                        print(f"[{datetime.now()}] API ERROR: {err_msg}")
+                        with self._lock: self.last_updated = f"API Err: {err_msg[:15]}"
                         return
-                except Exception as e:
-                    print(f"Error de red: {e}")
-                    with self._lock: self.last_updated = f"Fallo Red: {str(e)[:15]}"
+
+                    fixtures_found = data.get('response', [])
+                    print(f"[{datetime.now()}] Found {len(fixtures_found)} total fixtures.")
+                    all_fixtures.extend(fixtures_found)
+                else:
+                    with self._lock: self.last_updated = f"HTTP {resp.status_code}"
+                    print(f"[{datetime.now()}] Non-200 response: {resp.text[:200]}")
                     return
+            except requests.Timeout:
+                with self._lock: self.last_updated = "Error: API Lenta"
+                print(f"[{datetime.now()}] Timeout en Fase 1")
+                return
+            except Exception as e:
+                with self._lock: self.last_updated = "Error Conexión"
+                print(f"[{datetime.now()}] Error en Fase 1: {e}")
+                return
 
             processed = [f for f in all_fixtures if f['league']['id'] in ENABLED_LEAGUES]
+            print(f"[{datetime.now()}] Processed {len(processed)} matches after league filter.")
+            
             with self._lock:
                 self.matches = processed
             
             if not processed:
-                with self._lock: self.last_updated = "No hay partidos hoy"
+                with self._lock: self.last_updated = "Hoy sin partidos PRO"
                 return
 
             # Fase 2: Cuotas
-            with self._lock: self.last_updated = f"Paso 2/4: Cargando cuotas ({len(processed)} partidos)..."
-            # Obtenemos cuotas para hoy y mañana
+            with self._lock: self.last_updated = f"Paso 2/4: Cargando cuotas ({len(processed)})..."
             self.fetch_odds(hoy_str)
 
             # Fase 3: Predicciones
-            with self._lock: self.last_updated = f"Paso 3/4: Analizando mercados..."
+            with self._lock: self.last_updated = "Paso 3/4: Analizando mercados..."
             fixture_ids = [m['fixture']['id'] for m in processed]
             self.fetch_predictions(fixture_ids)
 
             # Fase 4: Picks Finales
-            with self._lock: self.last_updated = "Paso 4/4: Seleccionando mejores picks..."
+            with self._lock: self.last_updated = "Paso 4/4: Finalizando..."
             self.cached_picks = self.process_top_8()
             self.update_stats_from_results()
 
             with self._lock:
                 self.last_updated = datetime.now(tz_spain).strftime("%H:%M")
-            print(f"[{datetime.now()}] >>> FETCH COMPLETADO OK: {len(self.cached_picks)} picks generados <<<")
+            print(f"[{datetime.now()}] >>> FETCH OK: {len(self.cached_picks)} picks <<<")
 
         except Exception as e:
             import traceback
-            print(f"[{datetime.now()}] ERROR CRÍTICO EN FETCH:\n{traceback.format_exc()}")
-            with self._lock:
-                self.last_updated = f"Err: {str(e)[:15]}"
+            print(f"[{datetime.now()}] CRITICAL:\n{traceback.format_exc()}")
+            with self._lock: self.last_updated = f"Error Motor: {str(e)[:15]}"
 
 
     def start_scheduler(self):
@@ -230,13 +237,13 @@ class FixItPRO:
         new_preds = {}
         new_advice = {}
         count = 0
-        for f_id in fixtures_ids[:75]:
+        for f_id in fixtures_ids[:50]:
             try:
                 count += 1
-                if count % 10 == 0: print(f"[{datetime.now()}] Procesando prediccion {count}/75...")
-                time.sleep(0.05) # Pequeño respiro para el worker y la CPU
+                if count % 10 == 0: print(f"[{datetime.now()}] Prediccion {count}/50...")
+                time.sleep(0.1) # Respiro para el CPU y la API
                 url = f"{BASE_URL}/predictions?fixture={f_id}"
-                response = self.session.get(url, timeout=7)
+                response = self.session.get(url, timeout=10)
                 if response.status_code == 200:
                     data = response.json()
                     res = data.get('response', [])
