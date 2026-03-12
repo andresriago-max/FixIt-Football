@@ -359,18 +359,17 @@ class FixItPRO:
                 if match_date_str not in valid_dates:
                     continue
 
-                # ── Odds del partido (si las incluye la API) ──
+                # ── Odds del partido (opcionales: plan gratuito no las incluye) ──
                 odds_block = m.get("odds", {})
-                odd_home = odds_block.get("homeWin")
-                odd_draw = odds_block.get("draw")
-                odd_away = odds_block.get("awayWin")
+                # La API gratuita devuelve {"message": "...premium..."} en lugar de cuotas reales
+                if isinstance(odds_block, dict) and "message" in odds_block:
+                    odd_home = odd_draw = odd_away = None
+                else:
+                    odd_home = odds_block.get("homeWin")
+                    odd_draw = odds_block.get("draw")
+                    odd_away = odds_block.get("awayWin")
 
-                # Necesitamos al menos una cuota para calcular valor
-                has_odds = any(o is not None for o in [odd_home, odd_draw, odd_away])
-                if not has_odds:
-                    # Sin cuotas no podemos calcular value; saltamos el partido
-                    print(f"[{datetime.now()}] Sin cuotas para {home_name} vs {away_name}, saltando.")
-                    continue
+                has_odds = any(isinstance(o, (int, float)) for o in [odd_home, odd_draw, odd_away])
 
                 # ── Historial de equipos ──
                 with self._lock:
@@ -400,29 +399,39 @@ class FixItPRO:
                 ]
 
                 for market_key, prob, odd in markets_data:
-                    if odd is None or odd <= 1.0:
-                        continue
-                    value = (prob * float(odd)) - 1.0
-                    if value <= 0.10:
-                        continue  # Solo incluimos picks con valor real
-
                     label, icon, color = MARKET_META[market_key]
                     prob_pct = int(round(prob * 100))
+
+                    if has_odds and isinstance(odd, (int, float)) and odd > 1.0:
+                        # ── Modo VALUE BETTING: cuota disponible ──
+                        value = (prob * float(odd)) - 1.0
+                        if value <= 0.10:
+                            continue
+                        desc = f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Valor={value:.3f}"
+                        odd_display = float(odd)
+                    else:
+                        # ── Modo POISSON PURO: sin cuota (plan gratuito) ──
+                        # Solo picks donde Poisson da >50% de confianza
+                        if prob <= 0.50:
+                            continue
+                        value = prob - 0.50  # ventaja sobre el azar puro
+                        desc  = f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Confianza Poisson={prob_pct}%"
+                        odd_display = None
+
                     candidates.append({
                         "id":          fixture_id,
                         "teams":       f"{home_name} vs {away_name}",
                         "league":      league_name,
                         "market":      label,
-                        "description": f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Valor={value:.3f}",
+                        "description": desc,
                         "prob":        prob_pct,
                         "prob_raw":    prob,
-                        "odds":        float(odd),
+                        "odds":        odd_display,
                         "value":       value,
                         "date":        spain_dt.strftime("%d-%m-%Y"),
                         "time":        spain_dt.strftime("%H:%M"),
                         "icon":        icon,
                         "color":       color,
-                        # Para sidebar/stats
                         "_home_id":    home_id,
                         "_away_id":    away_id,
                         "_comp_code":  comp_code,
