@@ -19,14 +19,20 @@ def urlencode_filter(s):
 def debug():
     import os
     from main import engine
-    key = os.getenv("FOOTBALL_API_KEY")
+    key = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
+    top_pick = engine.cached_picks[0] if engine.cached_picks else {}
     return {
         "api_key_detected": "SI" if key else "NO",
         "api_key_preview": key[:4] if key and len(key) >= 4 else "????",
         "engine_status": engine.last_updated,
         "picks_count": len(engine.cached_picks),
         "matches_count": len(engine.matches),
-        "thread_started": getattr(engine, '_thread_started', False)
+        "thread_started": getattr(engine, '_thread_started', False),
+        "top_pick_sample": {
+            "teams": top_pick.get("teams", "n/a"),
+            "market": top_pick.get("market", "n/a"),
+            "value": round(top_pick.get("value", 0), 3)
+        }
     }
 
 @app.route('/sync')
@@ -43,11 +49,13 @@ def sync():
 @app.route('/test-api')
 def test_api():
     import os, requests
-    key = os.getenv("FOOTBALL_API_KEY")
-    url = "https://v3.football.api-sports.io/status"
+    key = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
+    url = "https://api.football-data.org/v4/competitions"
     try:
-        r = requests.get(url, headers={'x-apisports-key': key}, timeout=10)
-        return r.json()
+        r = requests.get(url, headers={"X-Auth-Token": key}, timeout=10)
+        data = r.json()
+        comps = [c.get("code") for c in data.get("competitions", [])[:5]]
+        return {"status": r.status_code, "competitions_sample": comps, "total": data.get("count", 0)}
     except Exception as e:
         return {"error": str(e)}
 

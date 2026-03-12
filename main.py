@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import requests
 import threading
 import time
@@ -7,174 +8,444 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
-print(f"[{datetime.now()}] >>> CARGANDO MOTOR FIXIT PRO <<<")
-API_KEY = os.getenv("FOOTBALL_API_KEY")
+print(f"[{datetime.now()}] >>> CARGANDO MOTOR FIXIT PRO v2 (Poisson Engine) <<<")
+
+API_KEY = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
 
 if not API_KEY:
-    print(f"[{datetime.now()}] WARNING: FOOTBALL_API_KEY no detectada en .env ni variables de entorno.")
+    print(f"[{datetime.now()}] WARNING: No se detectó FOOTBALLDATA_API_KEY en .env")
 else:
     API_KEY = str(API_KEY).strip()
-    k_preview = API_KEY[:4] if len(API_KEY) >= 4 else "****"
-    print(f"[{datetime.now()}] OK: API_KEY detectada (Inicio: {k_preview})")
+    print(f"[{datetime.now()}] OK: API_KEY detectada (Inicio: {API_KEY[:4]})")
 
-# Configuración Global
-BASE_URL = "https://v3.football.api-sports.io"
+BASE_URL = "https://api.football-data.org/v4"
 HEADERS = {
-    'x-apisports-key': API_KEY,
-    'x-rapidapi-host': 'v3.football.api-sports.io',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    "X-Auth-Token": API_KEY or "",
+    "User-Agent": "FixItFootball/2.0"
 }
 
-# Ligas PRO habilitadas (Mapping API-Sports ID)
-# 140: La Liga, 39: Premier League, 135: Serie A, 78: Bundesliga, 61: Ligue 1, 94: Primeira Liga, 88: Eredivisie
-ENABLED_LEAGUES = {
-    140: 'La Liga',
-    39: 'Premier League',
-    135: 'Serie A',
-    78: 'Bundesliga',
-    61: 'Ligue 1',
-    94: 'Liga Portugal',
-    88: 'Eredivisie',
-    40: 'Championship', # Inglaterra 2
-    141: 'La Liga 2',      # España 2
-    136: 'Serie B',        # Italia 2
-    79: '2. Bundesliga',  # Alemania 2
-    62: 'Ligue 2',        # Francia 2
-    253: 'MLS',           # USA
-    262: 'Liga MX',        # México
-    179: 'Liga Argentina',
-    71: 'Serie A Brasil',
-    239: 'Liga Colombia',
-    2: 'Champions League',
-    3: 'Europa League',
-    179: 'Liga Argentina',
-    144: 'Premiership Escocia'
+# Competiciones habilitadas en Football-Data.org plan gratuito
+# Código -> nombre display
+ENABLED_COMPETITIONS = {
+    "PL":  "Premier League",
+    "PD":  "La Liga",
+    "BL1": "Bundesliga",
+    "SA":  "Serie A",
+    "FL1": "Ligue 1",
+    "PPL": "Liga Portugal",
+    "DED": "Eredivisie",
+    "CL":  "Champions League",
+    "EL":  "Europa League",
+    "EC":  "Championship",
+    "CLI": "Copa Libertadores",
+    "BSA": "Serie A Brasil",
 }
+
+# Meta visual por tipo de pick (market_key → label, icon, color)
+MARKET_META = {
+    "home_win":  ("Victoria Local",     "fa-shield-halved",            "#10b981"),
+    "draw":      ("Empate",             "fa-equals",                   "#f59e0b"),
+    "away_win":  ("Victoria Visitante", "fa-plane",                    "#6366f1"),
+}
+
+# ─────────────────────────────────────────────────────────
+#  MOTOR MATEMÁTICO: DISTRIBUCIÓN DE POISSON
+# ─────────────────────────────────────────────────────────
+
+def poisson_prob(lam: float, k: int) -> float:
+    """P(X = k) para una distribución de Poisson con media lam."""
+    if lam <= 0:
+        return 1.0 if k == 0 else 0.0
+    return (lam ** k * math.exp(-lam)) / math.factorial(k)
+
+
+def calculate_1x2_poisson(lam_home: float, lam_away: float, max_goals: int = 8):
+    """
+    Calcula las probabilidades de 1 (local), X (empate), 2 (visitante)
+    usando distribución de Poisson bivariante independiente.
+    Retorna (prob_home, prob_draw, prob_away) como floats 0-1.
+    """
+    prob_home = prob_draw = prob_away = 0.0
+    for i in range(max_goals + 1):
+        p_i = poisson_prob(lam_home, i)
+        for j in range(max_goals + 1):
+            p_j = poisson_prob(lam_away, j)
+            joint = p_i * p_j
+            if i > j:
+                prob_home += joint
+            elif i == j:
+                prob_draw += joint
+            else:
+                prob_away += joint
+    # Normalizar por si las probabilidades no suman exactamente 1
+    total = prob_home + prob_draw + prob_away
+    if total > 0:
+        prob_home /= total
+        prob_draw  /= total
+        prob_away  /= total
+    return prob_home, prob_draw, prob_away
+
+
+def build_lambda(team_history: list, is_home_in_fixture: bool) -> tuple:
+    """
+    Calcula λ_ataque y λ_defensa de un equipo a partir de sus últimos N partidos.
+    Retorna (avg_goles_marcados, avg_goles_recibidos).
+    """
+    if not team_history:
+        return 1.2, 1.2  # valores neutros por defecto
+
+    scored_list  = []
+    conceded_list = []
+
+    for match in team_history:
+        home_team_id = match.get("homeTeam", {}).get("id")
+        home_score   = match.get("score", {}).get("fullTime", {}).get("home")
+        away_score   = match.get("score", {}).get("fullTime", {}).get("away")
+
+        if home_score is None or away_score is None:
+            continue  # partido sin resultado
+
+        if match.get("homeTeam", {}).get("id") == home_team_id:
+            # El equipo jugó como local
+            scored_list.append(home_score)
+            conceded_list.append(away_score)
+        else:
+            scored_list.append(away_score)
+            conceded_list.append(home_score)
+
+    if not scored_list:
+        return 1.2, 1.2
+
+    avg_scored   = sum(scored_list)   / len(scored_list)
+    avg_conceded = sum(conceded_list) / len(conceded_list)
+    return avg_scored, avg_conceded
+
+
+def compute_lambdas(home_history: list, away_history: list,
+                    league_avg_home: float = 1.45,
+                    league_avg_away: float = 1.05) -> tuple:
+    """
+    Calcula los parámetros de Poisson (λ_home, λ_away) según el modelo de
+    fuerza de ataque/defensa relativa (simplificado Dixon-Coles).
+    """
+    home_avg_scored,  home_avg_conceded = build_lambda(home_history, True)
+    away_avg_scored,  away_avg_conceded = build_lambda(away_history, False)
+
+    # Fuerza de ataque = promedio marcado del equipo / media de la liga
+    home_attack  = home_avg_scored   / league_avg_home if league_avg_home > 0 else 1.0
+    away_attack  = away_avg_scored   / league_avg_away if league_avg_away > 0 else 1.0
+
+    # Fuerza defensiva = media de la liga / promedio recibido (si recibe poco → mejor defensa)
+    home_defense = league_avg_away   / home_avg_conceded if home_avg_conceded > 0 else 1.0
+    away_defense = league_avg_home   / away_avg_conceded if away_avg_conceded > 0 else 1.0
+
+    # λ = ataque propio * defensa rival * media liga (como escala)
+    lam_home = home_attack * away_defense * league_avg_home
+    lam_away = away_attack * home_defense * league_avg_away
+
+    # Clamp razonable
+    lam_home = max(0.3, min(lam_home, 5.0))
+    lam_away = max(0.3, min(lam_away, 5.0))
+    return lam_home, lam_away
+
+
+def apply_fatigue(prob: float, last_match_date_str: str, today: datetime) -> float:
+    """
+    Resta un 5% de probabilidad si el equipo jugó hace menos de 4 días.
+    last_match_date_str formato: 'YYYY-MM-DD' o ISO.
+    """
+    if not last_match_date_str:
+        return prob
+    try:
+        last = datetime.fromisoformat(last_match_date_str[:10])
+        days_rest = (today.date() - last.date()).days
+        if days_rest < 4:
+            prob *= 0.95
+    except Exception:
+        pass
+    return prob
+
+
+def last_match_date(history: list) -> str:
+    """Devuelve la fecha del partido más reciente en el historial."""
+    dates = []
+    for m in history:
+        d = m.get("utcDate", "")
+        if d:
+            dates.append(d[:10])
+    if not dates:
+        return ""
+    return sorted(dates, reverse=True)[0]
+
+
+# ─────────────────────────────────────────────────────────
+#  CLASE PRINCIPAL
+# ─────────────────────────────────────────────────────────
 
 class FixItPRO:
     def __init__(self):
-        self.matches = []
-        self.fixtures_odds = {} # Almacén para cuotas reales
-        self.fixtures_predictions = {} # Almacén para coeficientes nativos
-        self.fixtures_advice = {} # Almacén para justificación de la API
-        self.cached_picks = []
-        self.last_updated: str = "Iniciando Motor PRO..."
-        self._lock = threading.RLock()
-        self.session = requests.Session()
+        self.matches: list          = []
+        self.cached_picks: list     = []
+        self.team_history_cache: dict = {}  # {team_id: [matches]}
+        self.last_updated: str      = "Iniciando Motor PRO v2..."
+        self._lock                  = threading.RLock()
+        self.session                = requests.Session()
         self.session.headers.update(HEADERS)
-        self.stats_file = "stats.json"
-        self.stats = self.load_stats()
-        # Asegurar que stats tiene la estructura correcta
-        if not isinstance(self.stats, dict): self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
-        if 'ligas' not in self.stats or not isinstance(self.stats['ligas'], dict): self.stats['ligas'] = {}
-        if 'processed_fixtures' not in self.stats: self.stats['processed_fixtures'] = []
-        if 'historial' not in self.stats: self.stats['historial'] = []
+        self.stats_file             = "stats.json"
+        self.stats                  = self.load_stats()
+        # Sanidad de stats
+        if not isinstance(self.stats, dict):
+            self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
+        for key in ("ligas", "processed_fixtures", "historial"):
+            if key not in self.stats or not isinstance(self.stats[key], (dict, list)):
+                self.stats[key] = {} if key == "ligas" else []
 
-    def load_stats(self):
+    # ── Persistencia ──────────────────────────────────────
+    def load_stats(self) -> dict:
         try:
             if os.path.exists(self.stats_file):
-                with open(self.stats_file, 'r') as f:
+                with open(self.stats_file, "r") as f:
                     content = f.read().strip()
-                    if not content: return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
-                    return json.loads(content)
+                    if content:
+                        return json.loads(content)
         except Exception as e:
-            print(f"[{datetime.now()}] Warning: No se pudo cargar stats.json ({e}). Usando valores por defecto.")
+            print(f"[{datetime.now()}] Warning: No se pudo cargar stats.json ({e})")
         return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
 
     def save_stats(self):
-        with open(self.stats_file, 'w') as f:
+        with open(self.stats_file, "w") as f:
             json.dump(self.stats, f, indent=4)
-    def fetch_data(self):
-        """Coordinador: partidos -> cuotas -> predicciones -> picks."""
+
+    # ── API: Partidos del día ──────────────────────────────
+    def fetch_matches_for_dates(self, date_from: str, date_to: str) -> list:
+        """Consulta /v4/matches para un rango de fechas."""
+        url = f"{BASE_URL}/matches?dateFrom={date_from}&dateTo={date_to}"
         try:
-            print(f"[{datetime.now()}] Iniciando fetch_data...")
+            resp = self.session.get(url, timeout=20)
+            print(f"[{datetime.now()}] /matches → HTTP {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("matches", [])
+            else:
+                print(f"[{datetime.now()}] Error /matches: {resp.text[:200]}")
+        except Exception as e:
+            print(f"[{datetime.now()}] Excepción /matches: {e}")
+        return []
+
+    # ── API: Historial de un equipo ────────────────────────
+    def fetch_team_history(self, team_id: int, limit: int = 10) -> list:
+        """
+        Obtiene los últimos N partidos finalizados de un equipo.
+        Usa caché en memoria para no repetir llamadas en el mismo ciclo.
+        Incluye throttle de 0.35s para respetar el rate limit del plan gratuito (10 req/min).
+        """
+        with self._lock:
+            if team_id in self.team_history_cache:
+                return self.team_history_cache[team_id]
+
+        time.sleep(0.35)  # ~10 req/min → ≤ 1 req cada 6 seg en carga normal
+        url = f"{BASE_URL}/teams/{team_id}/matches?status=FINISHED&limit={limit}"
+        try:
+            resp = self.session.get(url, timeout=15)
+            if resp.status_code == 200:
+                history = resp.json().get("matches", [])
+                with self._lock:
+                    self.team_history_cache[team_id] = history
+                return history
+            elif resp.status_code == 429:
+                print(f"[{datetime.now()}] Rate limit hit para team {team_id}, esperando 12s...")
+                time.sleep(12)
+            else:
+                print(f"[{datetime.now()}] Error historial team {team_id}: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"[{datetime.now()}] Excepción historial team {team_id}: {e}")
+        return []
+
+    # ── Coordinador principal ──────────────────────────────
+    def fetch_data(self):
+        """Coordinador: partidos → historiales → Poisson → picks con valor."""
+        try:
+            print(f"[{datetime.now()}] Iniciando fetch_data v2...")
             if not API_KEY:
-                with self._lock: self.last_updated = "Error: Falta API KEY"
+                with self._lock:
+                    self.last_updated = "Error: Falta FOOTBALLDATA_API_KEY"
                 return
 
             import pytz
-            tz_spain = pytz.timezone('Europe/Madrid')
-            now_spain = datetime.now(tz_spain)
-            hoy_str = now_spain.strftime("%Y-%m-%d")
+            tz_spain   = pytz.timezone("Europe/Madrid")
+            now_spain  = datetime.now(tz_spain)
+            hoy_str    = now_spain.strftime("%Y-%m-%d")
             manana_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
-            print(f"[{datetime.now()}] Fechas objetivo (España): {hoy_str}, {manana_str}")
 
-            # Fase 1: Partidos
-            with self._lock: self.last_updated = "Paso 1/4: Conectando API..."
-            all_fixtures = []
-            
-            for d in [hoy_str, manana_str]:
-                url = f"{BASE_URL}/fixtures?date={d}"
-                print(f"[{datetime.now()}] Requesting fixtures: {url}")
-                
-                try:
-                    resp = self.session.get(url, timeout=20)
-                    print(f"[{datetime.now()}] API Response Status: {resp.status_code}")
-                    
-                    if resp.status_code == 200:
-                        with self._lock: self.last_updated = "Paso 1/4: Procesando datos..."
-                        data = resp.json()
-                        errors = data.get('errors')
-                        if errors:
-                            err_msg = str(errors)
-                            print(f"[{datetime.now()}] API ERROR: {err_msg}")
-                            with self._lock: self.last_updated = f"API Err: {err_msg[:15]}"
-                            return
-
-                        fixtures_found = data.get('response', [])
-                        print(f"[{datetime.now()}] Found {len(fixtures_found)} total fixtures for {d}.")
-                        all_fixtures.extend(fixtures_found)
-                    else:
-                        with self._lock: self.last_updated = f"HTTP {resp.status_code}"
-                        print(f"[{datetime.now()}] Non-200 response: {resp.text[:200]}")
-                        return
-                except requests.Timeout:
-                    with self._lock: self.last_updated = "Error: API Lenta"
-                    print(f"[{datetime.now()}] Timeout en Fase 1 para {d}")
-                    return
-                except Exception as e:
-                    with self._lock: self.last_updated = "Error Conexión"
-                    print(f"[{datetime.now()}] Error en Fase 1 para {d}: {e}")
-                    return
-
-            processed = [f for f in all_fixtures if f['league']['id'] in ENABLED_LEAGUES]
-            print(f"[{datetime.now()}] Processed {len(processed)} matches after league filter.")
-            
+            # Limpiar caché de equipos entre ciclos
             with self._lock:
-                self.matches = processed
-            
-            if not processed:
-                with self._lock: self.last_updated = "No hay partidos PRO"
+                self.team_history_cache = {}
+                self.last_updated = "Paso 1/3: Obteniendo partidos..."
+
+            # ── Fase 1: Partidos ──────────────────────────
+            all_matches = self.fetch_matches_for_dates(hoy_str, manana_str)
+            enabled_comp_codes = set(ENABLED_COMPETITIONS.keys())
+            filtered = [
+                m for m in all_matches
+                if m.get("competition", {}).get("code") in enabled_comp_codes
+                and m.get("status") in ("SCHEDULED", "TIMED")
+            ]
+            print(f"[{datetime.now()}] Partidos filtrados por liga/estado: {len(filtered)}")
+
+            with self._lock:
+                self.matches = all_matches  # guardamos todos para stats/sidebar
+                self.last_updated = f"Paso 2/3: Analizando {len(filtered)} partidos..."
+
+            if not filtered:
+                with self._lock:
+                    self.last_updated = "Sin partidos PRO programados"
                 return
 
-            # Fase 2: Cuotas
-            with self._lock: self.last_updated = f"Paso 2/4: Cargando cuotas ({len(processed)})..."
-            self.fetch_odds([hoy_str, manana_str])
+            # ── Fase 2: Historiales + Poisson + Valor ─────
+            picks = self._build_poisson_picks(filtered, now_spain)
 
-            # Fase 3: Predicciones
-            with self._lock: self.last_updated = "Paso 3/4: Analizando mercados..."
-            fixture_ids = [m['fixture']['id'] for m in processed]
-            self.fetch_predictions(fixture_ids)
-
-            # Fase 4: Picks Finales
-            with self._lock: self.last_updated = "Paso 4/4: Finalizando..."
-            self.cached_picks = self.process_top_8()
-            self.update_stats_from_results()
-
+            # ── Fase 3: Cache picks ───────────────────────
             with self._lock:
-                self.last_updated = datetime.now(tz_spain).strftime("%H:%M")
-            print(f"[{datetime.now()}] >>> FETCH OK: {len(self.cached_picks)} picks <<<")
+                self.cached_picks = picks
+                self.last_updated = now_spain.strftime("%H:%M")
+
+            self.update_stats_from_results()
+            print(f"[{datetime.now()}] >>> FETCH OK: {len(picks)} value-picks <<<")
 
         except Exception as e:
             import traceback
             print(f"[{datetime.now()}] CRITICAL:\n{traceback.format_exc()}")
-            with self._lock: self.last_updated = f"Error Motor: {str(e)[:15]}"
+            with self._lock:
+                self.last_updated = f"Error Motor: {str(e)[:20]}"
 
+    # ── Motor Poisson + Value Betting ──────────────────────
+    def _build_poisson_picks(self, matches: list, now_spain: datetime) -> list:
+        """
+        Para cada partido:
+          1. Obtiene historial de ambos equipos (últimos 10)
+          2. Calcula λ con modelo de fuerza relativa
+          3. Aplica ajuste de fatiga
+          4. Calcula probabilidades 1X2 con Poisson
+          5. Filtra por valor: (prob × cuota) - 1 > 0.10
+        """
+        picks      = []
+        today      = now_spain
+        tomorrow   = (now_spain + timedelta(days=1))
+        valid_dates = {
+            today.strftime("%Y-%m-%d"),
+            tomorrow.strftime("%Y-%m-%d"),
+        }
 
+        import pytz
+        tz_spain = pytz.timezone("Europe/Madrid")
+
+        for m in matches:
+            try:
+                # ── Datos del partido ──
+                fixture_id  = m.get("id")
+                home_id     = m.get("homeTeam", {}).get("id")
+                away_id     = m.get("awayTeam", {}).get("id")
+                home_name   = m.get("homeTeam", {}).get("shortName") or m.get("homeTeam", {}).get("name", "?")
+                away_name   = m.get("awayTeam", {}).get("shortName") or m.get("awayTeam", {}).get("name", "?")
+                comp_code   = m.get("competition", {}).get("code", "")
+                league_name = ENABLED_COMPETITIONS.get(comp_code, m.get("competition", {}).get("name", comp_code))
+                utc_date_str = m.get("utcDate", "")
+
+                # ── Fecha / hora en España ──
+                utc_dt   = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
+                spain_dt = utc_dt.astimezone(tz_spain)
+                match_date_str = spain_dt.strftime("%Y-%m-%d")
+
+                if match_date_str not in valid_dates:
+                    continue
+
+                # ── Odds del partido (si las incluye la API) ──
+                odds_block = m.get("odds", {})
+                odd_home = odds_block.get("homeWin")
+                odd_draw = odds_block.get("draw")
+                odd_away = odds_block.get("awayWin")
+
+                # Necesitamos al menos una cuota para calcular valor
+                has_odds = any(o is not None for o in [odd_home, odd_draw, odd_away])
+                if not has_odds:
+                    # Sin cuotas no podemos calcular value; saltamos el partido
+                    print(f"[{datetime.now()}] Sin cuotas para {home_name} vs {away_name}, saltando.")
+                    continue
+
+                # ── Historial de equipos ──
+                with self._lock:
+                    self.last_updated = f"Analizando: {home_name[:12]} vs {away_name[:12]}"
+
+                home_hist = self.fetch_team_history(home_id, limit=10)
+                away_hist = self.fetch_team_history(away_id, limit=10)
+
+                # ── Lambdas Poisson ──
+                lam_home, lam_away = compute_lambdas(home_hist, away_hist)
+
+                # ── Ajuste de fatiga ──
+                last_home = last_match_date(home_hist)
+                last_away = last_match_date(away_hist)
+                lam_home = apply_fatigue(lam_home, last_home, today)
+                lam_away = apply_fatigue(lam_away, last_away, today)
+
+                # ── Probabilidades 1X2 ──
+                prob_h, prob_d, prob_a = calculate_1x2_poisson(lam_home, lam_away)
+
+                # ── Value Betting por mercado ──
+                candidates = []
+                markets_data = [
+                    ("home_win", prob_h, odd_home),
+                    ("draw",     prob_d, odd_draw),
+                    ("away_win", prob_a, odd_away),
+                ]
+
+                for market_key, prob, odd in markets_data:
+                    if odd is None or odd <= 1.0:
+                        continue
+                    value = (prob * float(odd)) - 1.0
+                    if value <= 0.10:
+                        continue  # Solo incluimos picks con valor real
+
+                    label, icon, color = MARKET_META[market_key]
+                    prob_pct = int(round(prob * 100))
+                    candidates.append({
+                        "id":          fixture_id,
+                        "teams":       f"{home_name} vs {away_name}",
+                        "league":      league_name,
+                        "market":      label,
+                        "description": f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Valor={value:.3f}",
+                        "prob":        prob_pct,
+                        "prob_raw":    prob,
+                        "odds":        float(odd),
+                        "value":       value,
+                        "date":        spain_dt.strftime("%d-%m-%Y"),
+                        "time":        spain_dt.strftime("%H:%M"),
+                        "icon":        icon,
+                        "color":       color,
+                        # Para sidebar/stats
+                        "_home_id":    home_id,
+                        "_away_id":    away_id,
+                        "_comp_code":  comp_code,
+                    })
+
+                # Solo el pick con mayor valor por partido
+                if candidates:
+                    best = max(candidates, key=lambda x: x["value"])
+                    picks.append(best)
+
+            except Exception as e:
+                print(f"[{datetime.now()}] Error procesando partido {m.get('id', '?')}: {e}")
+                continue
+
+        # Ordenar por valor descendente y limitar a 20
+        picks = sorted(picks, key=lambda x: x["value"], reverse=True)
+        return picks[:20]
+
+    # ── Scheduler ─────────────────────────────────────────
     def start_scheduler(self):
-        """Hilo en segundo plano para actualizaciones a las 02:00 y 12:00."""
+        """Hilo en segundo plano: actualiza a las 02:00 y 12:00 (hora local)."""
         def run_loop():
-            print("Scheduler PRO (API-Sports): Iniciado")
+            print("Scheduler PRO v2: Iniciado")
             while True:
                 now = datetime.now()
                 if (now.hour == 2 and now.minute == 0) or (now.hour == 12 and now.minute == 0):
@@ -185,337 +456,177 @@ class FixItPRO:
         thread = threading.Thread(target=run_loop, daemon=True)
         thread.start()
 
-    def fetch_odds(self, dates):
-        """Obtiene cuotas para múltiples mercados por partido."""
-        try:
-            new_odds = {}  # {fixture_id: {market_key: odd_float}}
-            for date in dates:
-                url = f"{BASE_URL}/odds?date={date}"
-                response = requests.get(url, headers=HEADERS, timeout=15)
-                if response.status_code == 200:
-                    data = response.json()
-                    odds_data = data.get('response', [])
-
-                    # Mercados que nos interesan:
-                    # 1 = Match Winner, 2 = Double Chance, 5 = Goals Over/Under, 8 = Both Teams Score
-                    # 30 = Corners Over/Under, 13 = Total Cards
-                    TARGET_BETS = {1, 2, 5, 8, 30, 13}
-
-                    for item in odds_data:
-                        f_id = item['fixture']['id']
-                        bookmakers = item.get('bookmakers', [])
-                        if not bookmakers: continue
-
-                        # Preferencia Bet365 (id:8) o el primero disponible
-                        bm = next((b for b in bookmakers if b['id'] == 8), bookmakers[0])
-                        markets = {}
-
-                        for bet in bm.get('bets', []):
-                            bid = bet['id']
-                            if bid not in TARGET_BETS: continue
-                            for val in bet.get('values', []):
-                                odd = float(val['odd'])
-                                v = val['value']
-                                if bid == 1 and v == 'Home':
-                                    markets['home_win'] = odd
-                                elif bid == 1 and v == 'Away':
-                                    markets['away_win'] = odd
-                                elif bid == 2 and v == '1X':   # Local no pierde
-                                    markets['double_1x'] = odd
-                                elif bid == 2 and v == 'X2':   # Visitante no pierde
-                                    markets['double_x2'] = odd
-                                elif bid == 5 and v == 'Over 2.5':
-                                    markets['over25'] = odd
-                                elif bid == 8 and v == 'Yes':  # Ambos marcan
-                                    markets['btts'] = odd
-                                elif bid == 30 and 'Over 9.5' in v:
-                                    markets['corner95'] = odd
-                                elif bid == 13 and 'Over 3.5' in v:
-                                    markets['cards35'] = odd
-
-                        if markets:
-                            new_odds[f_id] = markets
-
-            with self._lock:
-                self.fixtures_odds = new_odds
-        except Exception as e:
-            print(f"Error fetching odds: {e}")
-
-    def fetch_predictions(self, fixtures_ids):
-        """Obtiene predicciones nativas (Home %) y consejos para los partidos clave."""
-        new_preds = {}
-        new_advice = {}
-        count = 0
-        for f_id in fixtures_ids[:50]:
-            try:
-                count += 1
-                if count % 10 == 0: print(f"[{datetime.now()}] Prediccion {count}/50...")
-                time.sleep(0.1) # Respiro para el CPU y la API
-                url = f"{BASE_URL}/predictions?fixture={f_id}"
-                response = self.session.get(url, timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    res = data.get('response', [])
-                    if res:
-                        # 1. Porcentaje de victoria local
-                        home_pct = res[0].get('predictions', {}).get('percent', {}).get('home')
-                        if home_pct:
-                            new_preds[f_id] = int(home_pct.replace('%', ''))
-                        
-                        # 2. Consejo/Justificación de la API
-                        advice = res[0].get('predictions', {}).get('advice')
-                        if advice:
-                            new_advice[f_id] = advice
-            except Exception as e:
-                print(f"Error prediction {f_id}: {e}")
-        
-        with self._lock:
-            self.fixtures_predictions = new_preds
-            self.fixtures_advice = new_advice
-
-    def process_top_8(self):
-        """Selecciona el mejor mercado por partido con probabilidad >=40%."""
-        picks = []
-        seen_fixtures = set()  # evitar duplicar el mismo partido
-        with self._lock:
-            matches_snapshot = list(self.matches)
-            odds_snapshot = dict(self.fixtures_odds)
-            preds_snapshot = dict(self.fixtures_predictions)
-            advice_snapshot = dict(self.fixtures_advice)
-
-        # Configuración de mercados: (market_key, label, icon, color)
-        MARKET_META = {
-            'home_win':   ('Victoria Local',    'fa-shield-halved', '#10b981'),
-            'away_win':   ('Victoria Visitante', 'fa-plane',         '#6366f1'),
-            'double_1x':  ('Doble Op. (1X)',       'fa-arrows-split-up-and-left', '#f59e0b'),
-            'double_x2':  ('Doble Op. (X2)',       'fa-arrows-split-up-and-left', '#f43f5e'),
-            'btts':       ('Ambos Marcan',       'fa-futbol',        '#ec4899'),
-            'over25':     ('Más de 2.5 Goles',   'fa-fire',          '#ef4444'),
-            'corner95':   ('+9.5 Córners',       'fa-flag',          '#a855f7'),
-            'cards35':    ('+3.5 Tarjetas',      'fa-square',        '#facc15'),
-        }
-
-        # España CET
-        import pytz
-        tz_spain = pytz.timezone('Europe/Madrid')
-        now_spain = datetime.now(tz_spain)
-        today_str = now_spain.strftime("%Y-%m-%d")
-        tomorrow_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
-        valid_dates = [today_str, tomorrow_str]
-
-        for m in matches_snapshot:
-            f_id = m['fixture']['id']
-
-            # Filtro de horario y estado: Solo partidos por jugar
-            utc_time = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z")
-            match_spain = utc_time.astimezone(tz_spain)
-            match_date = match_spain.strftime("%Y-%m-%d")
-            
-            # 1. Que sea hoy o mañana
-            # 2. Que no haya empezado (ahora_spain < match_spain)
-            # 3. Que el status sea 'NS' (Not Started) o 'TBD'
-            status_short = m['fixture']['status']['short']
-            is_upcoming = (match_spain > now_spain) and (status_short in ['NS', 'TBD'])
-            is_valid_date = (match_date in valid_dates)
-            
-            if not is_valid_date or not is_upcoming: continue
-
-            advice = advice_snapshot.get(f_id, "Datos Estadísticos Oficiales")
-            league = ENABLED_LEAGUES.get(m['league']['id'], m['league']['name'])
-            home = m['teams']['home']['name']
-            away = m['teams']['away']['name']
-            time_str = match_spain.strftime("%H:%M")
-            markets_for_fixture = odds_snapshot.get(f_id, {})
-
-            # Evaluar todos los mercados disponibles para este partido
-            candidates = []
-
-            for market_key, (label, icon, color) in MARKET_META.items():
-                odd = markets_for_fixture.get(market_key)
-                native = preds_snapshot.get(f_id) if market_key == 'home_win' else None
-
-                # Necesitamos al menos cuota o predicción nativa
-                if not odd and not native: continue
-
-                # Probabilidad: nativa si disponible (home_win), si no 1/cuota
-                if market_key == 'home_win' and native:
-                    prob = native
-                elif odd and odd > 0:
-                    prob = int(round(100 / odd))
-                else:
-                    continue  # sin datos suficientes
-
-                if prob < 35: continue  # Umbral ajustado para recuperar volumen de picks
-
-                candidates.append({
-                    'id': f_id,
-                    'teams': f"{home} vs {away}",
-                    'league': league,
-                    'market': label,
-                    'description': advice,
-                    'prob': prob,
-                    'odds': odd,
-                    'date': match_spain.strftime("%d-%m-%Y"),
-                    'time': time_str,
-                    'icon': icon,
-                    'color': color,
-                })
-
-            if not candidates: continue
-
-            # Elegir el mercado con mayor probabilidad para este partido
-            best = max(candidates, key=lambda x: x['prob'])
-
-            if f_id not in seen_fixtures:
-                picks.append(best)
-                seen_fixtures.add(f_id)
-
-            if len(picks) >= 20: break
-
-        picks = sorted(picks, key=lambda x: x['prob'], reverse=True)
-        return picks[:20]
-
+    # ── Stats: actualizar desde resultados ────────────────
     def update_stats_from_results(self):
-        """Analiza partidos finalizados para actualizar el contador de éxitos."""
+        """Analiza partidos FINISHED para actualizar W/L y el historial."""
         cambios = False
         with self._lock:
-            # Asegurar que las listas existan
-            if 'processed_fixtures' not in self.stats: self.stats['processed_fixtures'] = []
-            if 'historial' not in self.stats: self.stats['historial'] = []
-            
-            processed_ids = set(self.stats['processed_fixtures'])
+            if "processed_fixtures" not in self.stats:
+                self.stats["processed_fixtures"] = []
+            if "historial" not in self.stats:
+                self.stats["historial"] = []
+
+            processed_ids = set(self.stats["processed_fixtures"])
 
             for m in self.matches:
-                f_id = m['fixture']['id']
-                
-                # Solo procesar si ha terminado y NO lo hemos procesado antes
-                if m['fixture']['status']['short'] == 'FT' and f_id not in processed_ids:
-                    home_goals = m['goals']['home']
-                    away_goals = m['goals']['away']
-                    league_name = ENABLED_LEAGUES.get(m['league']['id'], m['league']['name'])
-                    teams_name = f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}"
-                    date_match = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z").strftime("%d/%m/%Y")
-                    
-                    # Nuestra predicción PRO por defecto es Victoria Local (Home > Away)
-                    if home_goals > away_goals:
-                        self.stats['ganadas'] = self.stats.get('ganadas', 0) + 1
-                        
-                        ligas = self.stats.get('ligas', {})
-                        if not isinstance(ligas, dict): ligas = {}
-                        ligas[league_name] = ligas.get(league_name, 0) + 1
-                        self.stats['ligas'] = ligas
-                        
-                        # Añadir al historial
-                        nuevo_acierto = {
-                            "fecha": date_match,
-                            "equipos": teams_name,
-                            "liga": league_name,
-                            "resultado": f"{home_goals}-{away_goals}",
-                            "timestamp": time.time()
-                        }
-                        self.stats['historial'].insert(0, nuevo_acierto) # El más reciente primero
-                        # Limitar historial a los últimos 50
-                        self.stats['historial'] = self.stats['historial'][:50]
-                        
-                        cambios = True
-                    else:
-                        self.stats['perdidas'] = self.stats.get('perdidas', 0) + 1
-                        cambios = True
-                    
-                    # Marcar como procesado independientemente de si ganó o perdió
-                    self.stats['processed_fixtures'].append(f_id)
-                    processed_ids.add(f_id)
-                    # Limitar processed_fixtures para no crecer infinitamente (últimos 500)
-                    if len(self.stats['processed_fixtures']) > 500:
-                        self.stats['processed_fixtures'] = self.stats['processed_fixtures'][-500:]
-        
+                f_id   = m.get("id")
+                status = m.get("status", "")
+                if status != "FINISHED" or f_id in processed_ids:
+                    continue
+
+                home_goals = m.get("score", {}).get("fullTime", {}).get("home")
+                away_goals = m.get("score", {}).get("fullTime", {}).get("away")
+                if home_goals is None or away_goals is None:
+                    continue
+
+                comp_code   = m.get("competition", {}).get("code", "")
+                league_name = ENABLED_COMPETITIONS.get(comp_code, comp_code)
+                home_name   = m.get("homeTeam", {}).get("name", "?")
+                away_name   = m.get("awayTeam", {}).get("name", "?")
+                teams_str   = f"{home_name} vs {away_name}"
+                date_str    = m.get("utcDate", "")[:10]
+
+                if home_goals > away_goals:
+                    self.stats["ganadas"] = self.stats.get("ganadas", 0) + 1
+                    ligas = self.stats.get("ligas", {})
+                    ligas[league_name] = ligas.get(league_name, 0) + 1
+                    self.stats["ligas"] = ligas
+                    self.stats["historial"].insert(0, {
+                        "fecha":     date_str,
+                        "equipos":   teams_str,
+                        "liga":      league_name,
+                        "resultado": f"{home_goals}-{away_goals}",
+                        "timestamp": time.time(),
+                    })
+                    self.stats["historial"] = self.stats["historial"][:50]
+                else:
+                    self.stats["perdidas"] = self.stats.get("perdidas", 0) + 1
+
+                self.stats["processed_fixtures"].append(f_id)
+                processed_ids.add(f_id)
+                if len(self.stats["processed_fixtures"]) > 500:
+                    self.stats["processed_fixtures"] = self.stats["processed_fixtures"][-500:]
+                cambios = True
+
         if cambios:
             self.save_stats()
 
-    def get_top_leagues(self):
+    # ── Helpers de consulta ───────────────────────────────
+    def get_top_leagues(self) -> list:
         """Retorna las 3 mejores ligas por aciertos."""
         with self._lock:
-            sorted_ligas = sorted(self.stats['ligas'].items(), key=lambda x: x[1], reverse=True)
+            sorted_ligas = sorted(self.stats.get("ligas", {}).items(), key=lambda x: x[1], reverse=True)
             return sorted_ligas[:3]
+
+
+# ─────────────────────────────────────────────────────────
+#  INSTANCIA GLOBAL + INICIALIZACIÓN
+# ─────────────────────────────────────────────────────────
 
 engine = FixItPRO()
 
+
 def init_engine():
-    """Inicialización única del motor por worker de Gunicorn."""
+    """Inicialización única por worker de Gunicorn."""
     with engine._lock:
-        if getattr(engine, '_thread_started', False):
+        if getattr(engine, "_thread_started", False):
             return
         engine._thread_started = True
-        
+
         if not engine.matches and "Iniciando" in engine.last_updated:
             print(f"[{datetime.now()}] >>> INICIALIZANDO MOTOR EN WORKER <<<")
             threading.Thread(target=engine.fetch_data, daemon=True).start()
             engine.start_scheduler()
 
-# Ya no iniciamos el motor aquí.
-# init_engine() se llamará desde la primera petición web en app.py.
 
+# ─────────────────────────────────────────────────────────
+#  API PÚBLICA (usada por app.py sin cambios)
+# ─────────────────────────────────────────────────────────
+
+def get_stats() -> dict:
+    return engine.stats
+
+
+def get_top_leagues_rank() -> list:
+    return engine.get_top_leagues()
+
+
+def get_all_money_machine_picks() -> list:
+    """Devuelve inmediatamente la caché de picks calculados."""
+    return engine.cached_picks
+
+
+def get_daily_leagues_matches() -> dict:
+    """
+    Retorna la cartelera para el sidebar agrupada por liga.
+    Prioriza ligas top + partidos que están en los picks actuales.
+    """
+    output     = {}
+    priority   = {"PL", "PD", "SA", "BL1", "CL", "EL"}
+
+    with engine._lock:
+        matches_snapshot = list(engine.matches)
+        top_ids = {p.get("id") for p in engine.cached_picks if p.get("id")}
+
+    if not matches_snapshot:
+        return {}
+
+    import pytz
+    tz_spain = pytz.timezone("Europe/Madrid")
+
+    for m in matches_snapshot:
+        f_id      = m.get("id")
+        comp_code = m.get("competition", {}).get("code", "")
+
+        if comp_code not in priority and f_id not in top_ids:
+            continue
+
+        league = ENABLED_COMPETITIONS.get(comp_code, m.get("competition", {}).get("name", comp_code))
+        if league not in output:
+            output[league] = []
+
+        status_raw = m.get("status", "")
+        if status_raw in ("IN_PLAY", "HALFTIME", "PAUSED", "EXTRA_TIME", "PENALTY_SHOOTOUT"):
+            status = "LIVE"
+        elif status_raw == "FINISHED":
+            status = "FT"
+        else:
+            status = "PND"
+
+        home_goals = m.get("score", {}).get("fullTime", {}).get("home")
+        away_goals = m.get("score", {}).get("fullTime", {}).get("away")
+        score = f"{home_goals} - {away_goals}" if home_goals is not None else "-"
+
+        utc_date_str = m.get("utcDate", "")
+        try:
+            utc_dt   = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
+            spain_dt = utc_dt.astimezone(tz_spain)
+            time_str = spain_dt.strftime("%H:%M")
+        except Exception:
+            time_str = "--:--"
+
+        home_name = m.get("homeTeam", {}).get("shortName") or m.get("homeTeam", {}).get("name", "?")
+        away_name = m.get("awayTeam", {}).get("shortName") or m.get("awayTeam", {}).get("name", "?")
+
+        output[league].append({
+            "id":     f_id,
+            "teams":  f"{home_name} vs {away_name}",
+            "time":   time_str,
+            "status": status,
+            "score":  score,
+        })
+
+    return output
+
+
+# ─────────────────────────────────────────────────────────
+#  MODO MANUAL (python main.py)
+# ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print(f"[{datetime.now()}] Motor corriendo en modo manual.")
-    time.sleep(5)
-
-def get_stats():
-    return engine.stats
-
-def get_top_leagues_rank():
-    return engine.get_top_leagues()
-
-def get_all_money_machine_picks():
-    # Retorna lo que haya en cache inmediatamente, sin esperar a la API
-    return engine.cached_picks
-
-def get_daily_leagues_matches():
-    """Retorna los partidos para el sidebar siguiendo la jerarquía solicitada."""
-    output = {}
-    priority_ids = {140, 39, 135, 78, 2, 3} # La Liga, PL, Serie A, Bundes, UCL, UEL
-    
-    with engine._lock:
-        matches_snapshot = list(engine.matches)
-        # Extraer IDs de los picks PRO actuales para asegurar su presencia en el sidebar
-        top_20_ids = {p.get('id') for p in engine.cached_picks if p.get('id')}
-    
-    if not matches_snapshot: return {}
-        
-    for m in matches_snapshot:
-        f_id = m['fixture']['id']
-        l_id = m['league']['id']
-        
-        # Filtro de Jerarquía:
-        # 1. Si es liga prioritaria (La Liga, PL, etc.)
-        # 2. SI está en el Top 20 picks (independientemente de la liga)
-        if l_id not in priority_ids and f_id not in top_20_ids:
-            continue
-
-        league = ENABLED_LEAGUES.get(l_id, m['league']['name'])
-        if league not in output: output[league] = []
-        
-        status = 'PND'
-        short = m['fixture']['status']['short']
-        if short in ['1H', '2H', 'HT', 'ET', 'P']: status = 'LIVE'
-        elif short in ['FT', 'AET', 'PEN']: status = 'FT'
-        
-        score = "-"
-        if m['goals']['home'] is not None:
-            score = f"{m['goals']['home']} - {m['goals']['away']}"
-
-        utc_time = datetime.strptime(m['fixture']['date'], "%Y-%m-%dT%H:%M:%S%z")
-        time_str = utc_time.strftime("%H:%M")
-
-        output[league].append({
-            'id': f_id,
-            'teams': f"{m['teams']['home']['name']} vs {m['teams']['away']['name']}",
-            'time': time_str,
-            'status': status,
-            'score': score
-        })
-    return output
-
-if __name__ == "__main__":
     engine.fetch_data()
-    print(f"Engine PRO (Real): {len(engine.matches)} partidos actuales.")
+    picks = engine.cached_picks
+    print(f"\n=== {len(picks)} VALUE-PICKS GENERADOS ===")
+    for p in picks:
+        print(f"  [{p['league']}] {p['teams']} → {p['market']} | Cuota: {p['odds']} | Prob: {p['prob']}% | Valor: {p.get('value', 0):.3f}")
