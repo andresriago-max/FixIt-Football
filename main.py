@@ -272,11 +272,13 @@ class FixItPRO:
     # ── Coordinador principal ──────────────────────────────
     def fetch_data(self):
         """Coordinador: partidos → historiales → Poisson → picks con valor."""
+        log("fetch_data: Intentando entrar...")
         with self._lock:
             if self.is_fetching:
-                print(f"[{datetime.now()}] Ignorando fetch_data: ya hay uno en curso.")
+                log("fetch_data: Ya hay un fetch en curso, abortando.")
                 return
             self.is_fetching = True
+        log("fetch_data: Lock adquirido y bandera is_fetching marcada.")
 
         try:
             print(f"[{datetime.now()}] >>> INICIANDO FETCH_DATA v4 <<<", flush=True)
@@ -286,17 +288,17 @@ class FixItPRO:
                 self.is_fetching = False # LIBERAR
                 return
 
+            log("fetch_data: Preparando fechas...")
             import pytz
             tz_spain   = pytz.timezone("Europe/Madrid")
             now_spain  = datetime.now(tz_spain)
             hoy_str    = now_spain.strftime("%Y-%m-%d")
             manana_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
+            log(f"fetch_data: Ventana {hoy_str} a {manana_str}")
 
-            print(f"[{datetime.now()}] Ventana: {hoy_str} a {manana_str}", flush=True)
-
-            # Limpiar caché de equipos entre ciclos
             with self._lock:
                 self.last_updated = "Paso 1/3: Obteniendo partidos..."
+            log("fetch_data: Estado actualizado a Paso 1/3")
 
             # ── Fase 1: Partidos ──────────────────────────
             all_matches = self.fetch_matches_for_dates(hoy_str, manana_str)
