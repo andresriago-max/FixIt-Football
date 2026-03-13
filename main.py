@@ -293,13 +293,12 @@ class FixItPRO:
                     self.last_updated = "Error: Falta API_KEY"
                 return
 
-            log("fetch_data: Preparando fechas (v6)...")
+            log("fetch_data: Preparando fechas (v7)...")
             try:
                 from zoneinfo import ZoneInfo
                 tz_spain = ZoneInfo("Europe/Madrid")
-            except ImportError:
-                log("fetch_data: ZoneInfo no disponible, usando offset fijo UTC+1")
-                from datetime import timezone, timedelta
+            except Exception:
+                log("fetch_data: ZoneInfo no disponible o error, usando offset fijo UTC+1")
                 tz_spain = timezone(timedelta(hours=1))
 
             now_spain  = datetime.now(tz_spain)
