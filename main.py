@@ -230,16 +230,20 @@ class FixItPRO:
     def fetch_matches_for_dates(self, date_from: str, date_to: str) -> list:
         """Consulta /v4/matches para un rango de fechas."""
         url = f"{BASE_URL}/matches?dateFrom={date_from}&dateTo={date_to}"
+        log(f"API DEBUG: Llamando a {url}")
         try:
-            resp = self.session.get(url, timeout=20)
-            print(f"[{datetime.now()}] /matches → HTTP {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("matches", [])
+            # Forzar una nueva sesión por si acaso
+            r = requests.get(url, headers=HEADERS, timeout=15)
+            log(f"API DEBUG: Status {r.status_code}")
+            if r.status_code == 200:
+                data = r.json()
+                matches = data.get("matches", [])
+                log(f"API DEBUG: Recibidos {len(matches)} partidos")
+                return matches
             else:
-                print(f"[{datetime.now()}] Error /matches: {resp.text[:200]}")
+                log(f"API ERROR: {r.status_code} - {r.text[:100]}")
         except Exception as e:
-            print(f"[{datetime.now()}] Excepción /matches: {e}")
+            log(f"API EXCEPTION: {e}")
         return []
 
     # ── API: Historial de un equipo ────────────────────────
