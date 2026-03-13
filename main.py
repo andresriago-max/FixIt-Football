@@ -276,10 +276,11 @@ class FixItPRO:
             self.is_fetching = True
 
         try:
-            print(f"[{datetime.now()}] Iniciando fetch_data v3 (Alta Velocidad + Cache)...")
+            print(f"[{datetime.now()}] >>> INICIANDO FETCH_DATA v4 <<<", flush=True)
             if not API_KEY:
                 with self._lock:
-                    self.last_updated = "Error: Falta FOOTBALLDATA_API_KEY"
+                    self.last_updated = "Error: Falta API_KEY"
+                self.is_fetching = False # LIBERAR
                 return
 
             import pytz
@@ -287,6 +288,8 @@ class FixItPRO:
             now_spain  = datetime.now(tz_spain)
             hoy_str    = now_spain.strftime("%Y-%m-%d")
             manana_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            print(f"[{datetime.now()}] Ventana: {hoy_str} a {manana_str}", flush=True)
 
             # Limpiar caché de equipos entre ciclos
             with self._lock:
@@ -550,15 +553,19 @@ engine = FixItPRO()
 
 def init_engine():
     """Inicialización única por worker de Gunicorn."""
+    print(f"[{datetime.now()}] Intento init_engine...", flush=True)
     with engine._lock:
         if getattr(engine, "_thread_started", False):
+            print(f"[{datetime.now()}] init_engine: Ya iniciado en este proceso.", flush=True)
             return
         engine._thread_started = True
 
         if not engine.matches and "Sincronizando" in engine.last_updated:
-            print(f"[{datetime.now()}] >>> INICIALIZANDO MOTOR EN WORKER <<<")
-            threading.Thread(target=engine.fetch_data, daemon=True).start()
+            print(f"[{datetime.now()}] >>> LANZANDO MOTOR DE FONDO <<<", flush=True)
+            t = threading.Thread(target=engine.fetch_data, daemon=True)
+            t.start()
             engine.start_scheduler()
+            print(f"[{datetime.now()}] init_engine: Hilo secundario lanzado.", flush=True)
 
 
 # ─────────────────────────────────────────────────────────
