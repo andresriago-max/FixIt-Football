@@ -197,10 +197,10 @@ class FixItPRO:
         self.cached_picks           = self.stats.get("cached_picks", [])
         # Sanidad de stats
         if not isinstance(self.stats, dict):
-            self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": []}
-        for key in ("ligas", "processed_fixtures", "historial", "cached_picks"):
-            if key not in self.stats or not isinstance(self.stats[key], (dict, list)):
-                self.stats[key] = {} if key == "ligas" else []
+            self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": [], "team_histories": {}}
+        for key in ("ligas", "processed_fixtures", "historial", "cached_picks", "team_histories"):
+            if key not in self.stats:
+                self.stats[key] = {} if key in ("ligas", "team_histories") else []
 
     # ── Persistencia ──────────────────────────────────────
     def load_stats(self) -> dict:
@@ -212,7 +212,7 @@ class FixItPRO:
                         return json.loads(content)
         except Exception as e:
             print(f"[{datetime.now()}] Warning: No se pudo cargar stats.json ({e})")
-        return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": []}
+        return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": [], "team_histories": {}}
 
     def save_stats(self):
         with open(self.stats_file, "w") as f:
@@ -235,32 +235,35 @@ class FixItPRO:
         return []
 
     # ── API: Historial de un equipo ────────────────────────
-    def fetch_team_history(self, team_id: int, limit: int = 10) -> list:
-        """
-        Obtiene los últimos N partidos finalizados de un equipo.
-        Usa caché en memoria para no repetir llamadas en el mismo ciclo.
-        Incluye throttle de 0.35s para respetar el rate limit del plan gratuito (10 req/min).
-        """
-        with self._lock:
-            if team_id in self.team_history_cache:
-                return self.team_history_cache[team_id]
+    def fetch_team_history(self, team_id: int, limit: int = 5) -> list:
+        """Obtiene últimos N resultados de un equipo (con cache en stats.json)."""
+        # 1. Verificar Cache
+        cache_key = str(team_id)
+        if cache_key in self.stats.get("team_histories", {}):
+            cached_data = self.stats["team_histories"][cache_key]
+            # Validar que tenga suficientes partidos y sea reciente (opcional para simplicidad)
+            if len(cached_data) >= limit:
+                return cached_data[:limit]
 
-        time.sleep(6.1)  # Plan gratuito: 10 req/min → 1 cada 6 seg para evitar 429
+        # 2. Si no hay cache, consultar API
         url = f"{BASE_URL}/teams/{team_id}/matches?status=FINISHED&limit={limit}"
         try:
+            print(f"[{datetime.now()}] API: Consultando historial equipo {team_id}...")
+            # Respetar rate limit (10 req/min -> 1 cada 6.1s)
+            time.sleep(6.1)
             resp = self.session.get(url, timeout=15)
             if resp.status_code == 200:
-                history = resp.json().get("matches", [])
+                data = resp.json().get("matches", [])
+                # Guardar en cache persistentemente
                 with self._lock:
-                    self.team_history_cache[team_id] = history
-                return history
-            elif resp.status_code == 429:
-                print(f"[{datetime.now()}] Rate limit hit para team {team_id}, esperando 12s...")
-                time.sleep(12)
+                    if "team_histories" not in self.stats:
+                        self.stats["team_histories"] = {}
+                    self.stats["team_histories"][cache_key] = data
+                return data
             else:
-                print(f"[{datetime.now()}] Error historial team {team_id}: HTTP {resp.status_code}")
+                print(f"[{datetime.now()}] API Error {resp.status_code} en historial {team_id}")
         except Exception as e:
-            print(f"[{datetime.now()}] Excepción historial team {team_id}: {e}")
+            print(f"[{datetime.now()}] Excepción fetch_team_history: {e}")
         return []
 
     # ── Coordinador principal ──────────────────────────────
@@ -273,7 +276,7 @@ class FixItPRO:
             self.is_fetching = True
 
         try:
-            print(f"[{datetime.now()}] Iniciando fetch_data v2 (Optimizado)...")
+            print(f"[{datetime.now()}] Iniciando fetch_data v3 (Alta Velocidad + Cache)...")
             if not API_KEY:
                 with self._lock:
                     self.last_updated = "Error: Falta FOOTBALLDATA_API_KEY"
@@ -287,7 +290,6 @@ class FixItPRO:
 
             # Limpiar caché de equipos entre ciclos
             with self._lock:
-                self.team_history_cache = {}
                 self.last_updated = "Paso 1/3: Obteniendo partidos..."
 
             # ── Fase 1: Partidos ──────────────────────────
@@ -310,10 +312,12 @@ class FixItPRO:
                     self.last_updated = "Sin partidos PRO programados"
                 return
 
-            # ── Fase 2: Historiales + Poisson + Valor ─────
+            # ── Fase 2: Análisis Poisson ──────────────────
+            print(f"[{datetime.now()}] Analizando {len(filtered)} partidos encontrados...")
+            self.cached_picks = [] # Limpìar para nueva carga progresiva
             picks = self._build_poisson_picks(filtered, now_spain)
-
-            # ── Fase 3: Cache picks ───────────────────────
+            
+            # ── Fase 3: Resultados ayer ───────────────────
             with self._lock:
                 self.cached_picks = picks
                 self.stats["cached_picks"] = picks
@@ -323,6 +327,7 @@ class FixItPRO:
             self.save_stats()
             print(f"[{datetime.now()}] >>> FETCH OK: {len(picks)} value-picks <<<")
 
+        except Exception as e:
             with self._lock:
                 self.last_updated = f"Error Motor: {str(e)[:20]}"
         finally:
@@ -339,7 +344,7 @@ class FixItPRO:
           4. Calcula probabilidades 1X2 con Poisson
           5. Filtra por valor: (prob × cuota) - 1 > 0.10
         """
-        picks      = []
+        picks_found = []
         today      = now_spain
         tomorrow   = (now_spain + timedelta(days=1))
         valid_dates = {
@@ -366,6 +371,7 @@ class FixItPRO:
                 utc_dt   = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
                 spain_dt = utc_dt.astimezone(tz_spain)
                 match_date_str = spain_dt.strftime("%Y-%m-%d")
+                time_str = spain_dt.strftime("%H:%M")
 
                 if match_date_str not in valid_dates:
                     continue
@@ -402,7 +408,6 @@ class FixItPRO:
                 prob_h, prob_d, prob_a = calculate_1x2_poisson(lam_home, lam_away)
 
                 # ── Value Betting por mercado ──
-                candidates = []
                 markets_data = [
                     ("home_win", prob_h, odd_home),
                     ("draw",     prob_d, odd_draw),
@@ -410,8 +415,7 @@ class FixItPRO:
                 ]
 
                 for market_key, prob, odd in markets_data:
-                    label, icon, color = MARKET_META[market_key]
-                    prob_pct = int(round(prob * 100))
+                    market_name, icon, color = MARKET_META[market_key]
 
                     if has_odds and isinstance(odd, (int, float)) and odd > 1.0:
                         # ── Modo VALUE BETTING: cuota disponible ──
@@ -419,47 +423,45 @@ class FixItPRO:
                         if value <= 0.10:
                             continue
                         desc = f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Valor={value:.3f}"
-                        odd_display = float(odd)
+                        odds_val = float(odd)
                     else:
                         # ── Modo POISSON PURO: sin cuota (plan gratuito) ──
-                        # Solo picks donde Poisson da >50% de confianza
-                        if prob <= 0.50:
+                        # Bajamos umbral a 35% para que la app siempre tenga picks relevantes
+                        if prob <= 0.35:
                             continue
-                        value = prob - 0.50  # ventaja sobre el azar puro
-                        desc  = f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Confianza Poisson={prob_pct}%"
-                        odd_display = None
+                        value = prob - 0.35
+                        desc  = f"λ Local={lam_home:.2f} | λ Visit={lam_away:.2f} | Confianza Poisson={int(prob*100)}%"
+                        odds_val = "PRO"
 
-                    candidates.append({
+                    p = {
                         "id":          fixture_id,
                         "teams":       f"{home_name} vs {away_name}",
                         "league":      league_name,
-                        "market":      label,
+                        "market":      market_name,
                         "description": desc,
-                        "prob":        prob_pct,
-                        "prob_raw":    prob,
-                        "odds":        odd_display,
+                        "prob":        int(prob * 100),
+                        "odds":        odds_val,
                         "value":       value,
                         "date":        spain_dt.strftime("%d-%m-%Y"),
-                        "time":        spain_dt.strftime("%H:%M"),
+                        "time":        time_str,
                         "icon":        icon,
-                        "color":       color,
-                        "_home_id":    home_id,
-                        "_away_id":    away_id,
-                        "_comp_code":  comp_code,
-                    })
-
-                # Solo el pick con mayor valor por partido
-                if candidates:
-                    best = max(candidates, key=lambda x: x["value"])
-                    picks.append(best)
+                        "color":       color
+                    }
+                    picks_found.append(p)
+                    # Actualización progresiva para que el usuario vea picks mientras se calculan
+                    with self._lock:
+                        self.cached_picks.append(p)
+                    print(f"[{datetime.now()}] Pick Generado: {home_name} vs {away_name} -> {market_name} ({int(prob*100)}%)")
 
             except Exception as e:
-                print(f"[{datetime.now()}] Error procesando partido {m.get('id', '?')}: {e}")
+                import traceback
+                print(f"[{datetime.now()}] Error procesando partido {fixture_id}: {e}\n{traceback.format_exc()}")
                 continue
 
-        # Ordenar por valor descendente y limitar a 20
-        picks = sorted(picks, key=lambda x: x["value"], reverse=True)
-        return picks[:20]
+        # Ordenar por valor descendente (los mejores primero)
+        picks_found.sort(key=lambda x: x.get("value", 0), reverse=True)
+        print(f"[{datetime.now()}] Análisis terminado. {len(picks_found)} picks generados.")
+        return picks_found
 
     # ── Scheduler ─────────────────────────────────────────
     def start_scheduler(self):
