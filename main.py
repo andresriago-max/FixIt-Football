@@ -234,10 +234,10 @@ class FixItPRO:
         url = f"{BASE_URL}/matches?dateFrom={date_from}&dateTo={date_to}"
         log(f"API DEBUG: Llamando a {url}")
         try:
-            log("API DEBUG: Ejecutando requests.get (v9)...")
-            # Headers mínimos (igual que en /test-api que funciona)
+            log("API DEBUG: Ejecutando requests.get (v10)...")
+            # Headers mínimos + sin proxies para evitar cuelgues en Render
             h = {"X-Auth-Token": str(API_KEY)}
-            r = requests.get(url, headers=h, timeout=10)
+            r = requests.get(url, headers=h, timeout=(5, 10), proxies={'http': None, 'https': None})
             log(f"API DEBUG: Respuesta recibida. Status {r.status_code}")
             if r.status_code == 200:
                 data = r.json()
