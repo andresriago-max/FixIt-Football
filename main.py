@@ -293,9 +293,15 @@ class FixItPRO:
                     self.last_updated = "Error: Falta API_KEY"
                 return
 
-            log("fetch_data: Preparando fechas...")
-            import pytz
-            tz_spain   = pytz.timezone("Europe/Madrid")
+            log("fetch_data: Preparando fechas (v6)...")
+            try:
+                from zoneinfo import ZoneInfo
+                tz_spain = ZoneInfo("Europe/Madrid")
+            except ImportError:
+                log("fetch_data: ZoneInfo no disponible, usando offset fijo UTC+1")
+                from datetime import timezone, timedelta
+                tz_spain = timezone(timedelta(hours=1))
+
             now_spain  = datetime.now(tz_spain)
             hoy_str    = now_spain.strftime("%Y-%m-%d")
             manana_str = (now_spain + timedelta(days=1)).strftime("%Y-%m-%d")
