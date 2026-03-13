@@ -10,13 +10,15 @@ from dotenv import load_dotenv
 load_dotenv()
 LOG_BUFFER = []
 def log(msg):
-    s = f"[{datetime.now()}] {msg}"
+    import os
+    pid = os.getpid()
+    s = f"[{datetime.now()}][PID:{pid}] {msg}"
     print(s, flush=True)
     LOG_BUFFER.append(s)
     if len(LOG_BUFFER) > 200:
         LOG_BUFFER.pop(0)
 
-log(">>> CARGANDO MOTOR FIXIT PRO v8-CONFIRMED (Strict Mode) <<<")
+log(">>> CARGANDO MOTOR FIXIT PRO v9-FINAL-LOGS <<<")
 
 API_KEY = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
 
@@ -232,8 +234,10 @@ class FixItPRO:
         url = f"{BASE_URL}/matches?dateFrom={date_from}&dateTo={date_to}"
         log(f"API DEBUG: Llamando a {url}")
         try:
-            log("API DEBUG: Ejecutando requests.get...")
-            r = requests.get(url, headers=HEADERS, timeout=10)
+            log("API DEBUG: Ejecutando requests.get (v9)...")
+            # Headers mínimos (igual que en /test-api que funciona)
+            h = {"X-Auth-Token": str(API_KEY)}
+            r = requests.get(url, headers=h, timeout=10)
             log(f"API DEBUG: Respuesta recibida. Status {r.status_code}")
             if r.status_code == 200:
                 data = r.json()
