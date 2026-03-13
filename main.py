@@ -16,7 +16,7 @@ def log(msg):
     if len(LOG_BUFFER) > 200:
         LOG_BUFFER.pop(0)
 
-log(">>> CARGANDO MOTOR FIXIT PRO v5 (Diag Mode) <<<")
+log(">>> CARGANDO MOTOR FIXIT PRO v8-CONFIRMED (Strict Mode) <<<")
 
 API_KEY = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
 
@@ -232,9 +232,9 @@ class FixItPRO:
         url = f"{BASE_URL}/matches?dateFrom={date_from}&dateTo={date_to}"
         log(f"API DEBUG: Llamando a {url}")
         try:
-            # Forzar una nueva sesión por si acaso
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            log(f"API DEBUG: Status {r.status_code}")
+            log("API DEBUG: Ejecutando requests.get...")
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            log(f"API DEBUG: Respuesta recibida. Status {r.status_code}")
             if r.status_code == 200:
                 data = r.json()
                 matches = data.get("matches", [])
