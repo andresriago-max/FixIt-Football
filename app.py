@@ -66,6 +66,10 @@ def health():
     """Ruta de salud para monitoreo de despliegue."""
     return {"status": "healthy", "engine_status": main.engine.last_updated}, 200
 
+@app.route('/p-logs')
+def p_logs():
+    return "<br>".join(main.LOG_BUFFER)
+
 @app.route('/')
 def index():
     # Obtener el Top picks actual
