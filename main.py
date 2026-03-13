@@ -8,10 +8,15 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
+LOG_BUFFER = []
 def log(msg):
-    print(f"[{datetime.now()}] {msg}", flush=True)
+    s = f"[{datetime.now()}] {msg}"
+    print(s, flush=True)
+    LOG_BUFFER.append(s)
+    if len(LOG_BUFFER) > 200:
+        LOG_BUFFER.pop(0)
 
-log(">>> CARGANDO MOTOR FIXIT PRO v4 (Poisson Engine) <<<")
+log(">>> CARGANDO MOTOR FIXIT PRO v5 (Diag Mode) <<<")
 
 API_KEY = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
 
@@ -281,11 +286,11 @@ class FixItPRO:
         log("fetch_data: Lock adquirido y bandera is_fetching marcada.")
 
         try:
-            print(f"[{datetime.now()}] >>> INICIANDO FETCH_DATA v4 <<<", flush=True)
+            log("fetch_data: Iniciando try block...")
+            print(f"[{datetime.now()}] >>> INICIANDO FETCH_DATA v5 <<<", flush=True)
             if not API_KEY:
                 with self._lock:
                     self.last_updated = "Error: Falta API_KEY"
-                self.is_fetching = False # LIBERAR
                 return
 
             log("fetch_data: Preparando fechas...")
@@ -302,6 +307,7 @@ class FixItPRO:
 
             # ── Fase 1: Partidos ──────────────────────────
             all_matches = self.fetch_matches_for_dates(hoy_str, manana_str)
+            log(f"fetch_data: Recibidos {len(all_matches)} partidos")
             print(f"[{datetime.now()}] Partidos recibidos del API: {len(all_matches)}")
             enabled_comp_codes = set(ENABLED_COMPETITIONS.keys())
             filtered = [
@@ -309,19 +315,22 @@ class FixItPRO:
                 if m.get("competition", {}).get("code") in enabled_comp_codes
                 and m.get("status") in ("SCHEDULED", "TIMED")
             ]
+            log(f"fetch_data: Filtrados {len(filtered)} partidos")
             print(f"[{datetime.now()}] Partidos filtrados por liga/estado: {len(filtered)}")
 
             with self._lock:
                 self.matches = filtered  # Solo los que analizamos para mayor agilidad
                 self.last_updated = f"Paso 2/3: Analizando {len(filtered)} partidos..."
+            log(f"fetch_data: matches actualizado, estado -> Paso 2/3")
 
             if not filtered:
                 with self._lock:
                     self.last_updated = "Sin partidos PRO programados"
+                log("fetch_data: No hay partidos, terminando.")
                 return
 
             # ── Fase 2: Análisis Poisson ──────────────────
-            print(f"[{datetime.now()}] Analizando {len(filtered)} partidos encontrados...")
+            log("fetch_data: Iniciando análisis Poisson...")
             self.cached_picks = [] # Limpìar para nueva carga progresiva
             picks = self._build_poisson_picks(filtered, now_spain)
             
@@ -330,17 +339,21 @@ class FixItPRO:
                 self.cached_picks = picks
                 self.stats["cached_picks"] = picks
                 self.last_updated = now_spain.strftime("%H:%M")
+            log(f"fetch_data: Paso 3/3 terminado, {len(picks)} picks.")
 
             self.update_stats_from_results()
             self.save_stats()
+            log("fetch_data: Stats guardadas, fetch completo.")
             print(f"[{datetime.now()}] >>> FETCH OK: {len(picks)} value-picks <<<")
 
         except Exception as e:
+            log(f"fetch_data: CRITICAL ERROR: {e}")
             with self._lock:
                 self.last_updated = f"Error Motor: {str(e)[:20]}"
         finally:
             with self._lock:
                 self.is_fetching = False
+            log("fetch_data: Salida (is_fetching = False)")
 
     # ── Motor Poisson + Value Betting ──────────────────────
     def _build_poisson_picks(self, matches: list, now_spain: datetime) -> list:
