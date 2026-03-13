@@ -304,7 +304,7 @@ class FixItPRO:
             print(f"[{datetime.now()}] Partidos filtrados por liga/estado: {len(filtered)}")
 
             with self._lock:
-                self.matches = all_matches  # guardamos todos para stats/sidebar
+                self.matches = filtered  # Solo los que analizamos para mayor agilidad
                 self.last_updated = f"Paso 2/3: Analizando {len(filtered)} partidos..."
 
             if not filtered:
@@ -580,64 +580,28 @@ def get_all_money_machine_picks() -> list:
 
 def get_daily_leagues_matches() -> dict:
     """
-    Retorna la cartelera para el sidebar agrupada por liga.
-    Prioriza ligas top + partidos que están en los picks actuales.
+    Retorna solo los partidos que ya tienen pronósticos PRO para el sidebar.
+    Esto hace el proceso mucho más ágil.
     """
     output     = {}
-    priority   = {"PL", "PD", "SA", "BL1", "CL", "EL", "ELC", "CLI", "BSA", "DED", "FL1"}
-
     with engine._lock:
-        matches_snapshot = list(engine.matches)
-        top_ids = {p.get("id") for p in engine.cached_picks if p.get("id")}
+        picks = list(engine.cached_picks)
 
-    if not matches_snapshot:
+    if not picks:
         return {}
 
-    import pytz
-    tz_spain = pytz.timezone("Europe/Madrid")
-
-    for m in matches_snapshot:
-        f_id      = m.get("id")
-        comp_code = m.get("competition", {}).get("code", "")
-
-        if comp_code not in priority and f_id not in top_ids:
-            continue
-
-        league = ENABLED_COMPETITIONS.get(comp_code, m.get("competition", {}).get("name", comp_code))
+    for p in picks:
+        league = p.get("league", "Otros")
         if league not in output:
             output[league] = []
-
-        status_raw = m.get("status", "")
-        if status_raw in ("IN_PLAY", "HALFTIME", "PAUSED", "EXTRA_TIME", "PENALTY_SHOOTOUT"):
-            status = "LIVE"
-        elif status_raw == "FINISHED":
-            status = "FT"
-        else:
-            status = "PND"
-
-        home_goals = m.get("score", {}).get("fullTime", {}).get("home")
-        away_goals = m.get("score", {}).get("fullTime", {}).get("away")
-        score = f"{home_goals} - {away_goals}" if home_goals is not None else "-"
-
-        utc_date_str = m.get("utcDate", "")
-        try:
-            utc_dt   = datetime.fromisoformat(utc_date_str.replace("Z", "+00:00"))
-            spain_dt = utc_dt.astimezone(tz_spain)
-            time_str = spain_dt.strftime("%H:%M")
-        except Exception:
-            time_str = "--:--"
-
-        home_name = m.get("homeTeam", {}).get("shortName") or m.get("homeTeam", {}).get("name", "?")
-        away_name = m.get("awayTeam", {}).get("shortName") or m.get("awayTeam", {}).get("name", "?")
-
+        
         output[league].append({
-            "id":     f_id,
-            "teams":  f"{home_name} vs {away_name}",
-            "time":   time_str,
-            "status": status,
-            "score":  score,
+            "id":     p.get("id"),
+            "teams":  p.get("teams"),
+            "time":   p.get("time"),
+            "status": "PND", 
+            "score":  "-"
         })
-
     return output
 
 

@@ -599,35 +599,7 @@
 
     <div class="app-layout">
         <aside class="sidebar">
-            <div class="sidebar-title">
-                <i class="fa-solid fa-calendar-days" style="color: var(--accent);"></i>
-                Cartelera Diaria
-            </div>
-
-            {% for league, matches in sidebar_matches.items() %}
-            <div class="league-group">
-                <div class="league-name">
-                    {{ league }}
-                    <span style="opacity: 0.5; font-size: 0.6rem;">HOY</span>
-                </div>
-                {% for match in matches %}
-                <div class="sidebar-match">
-                    <div class="match-main">
-                        <span class="teams">{{ match.teams }}</span>
-                        {% if match.status != 'PND' %}
-                        <span class="match-score">{{ match.score }}</span>
-                        {% endif %}
-                    </div>
-                    <div class="match-meta">
-                        <span class="time"><i class="fa-regular fa-clock"></i> {{ match.time }}</span>
-                        {% if match.status == 'LIVE' %}
-                        <span class="live-badge">LIVE</span>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-            {% endfor %}
+            <!-- Sidebar simplificado: Estadísticas -->
 
             <!-- STATS WIDGETS -->
             <div class="stats-widget">
