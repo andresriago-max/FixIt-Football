@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
-print(f"[{datetime.now()}] >>> CARGANDO MOTOR FIXIT PRO v2 (Poisson Engine) <<<")
+def log(msg):
+    print(f"[{datetime.now()}] {msg}", flush=True)
+
+log(">>> CARGANDO MOTOR FIXIT PRO v4 (Poisson Engine) <<<")
 
 API_KEY = os.getenv("FOOTBALLDATA_API_KEY") or os.getenv("FOOTBALL_API_KEY")
 
@@ -181,9 +184,9 @@ def last_match_date(history: list) -> str:
 # ─────────────────────────────────────────────────────────
 #  CLASE PRINCIPAL
 # ─────────────────────────────────────────────────────────
-
 class FixItPRO:
     def __init__(self):
+        log("FixItPRO: Iniciando constructor...")
         self.matches: list          = []
         self.cached_picks: list     = []
         self.team_history_cache: dict = {}  # {team_id: [matches]}
