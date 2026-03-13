@@ -36,7 +36,7 @@ ENABLED_COMPETITIONS = {
     "DED": "Eredivisie",
     "CL":  "Champions League",
     "EL":  "Europa League",
-    "EC":  "Championship",
+    "ELC": "Championship",
     "CLI": "Copa Libertadores",
     "BSA": "Serie A Brasil",
 }
@@ -187,16 +187,18 @@ class FixItPRO:
         self.matches: list          = []
         self.cached_picks: list     = []
         self.team_history_cache: dict = {}  # {team_id: [matches]}
-        self.last_updated: str      = "Iniciando Motor PRO v2..."
+        self.last_updated: str      = "Sincronizando Motor PRO..."
+        self.is_fetching: bool      = False
         self._lock                  = threading.RLock()
         self.session                = requests.Session()
         self.session.headers.update(HEADERS)
         self.stats_file             = "stats.json"
         self.stats                  = self.load_stats()
+        self.cached_picks           = self.stats.get("cached_picks", [])
         # Sanidad de stats
         if not isinstance(self.stats, dict):
-            self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
-        for key in ("ligas", "processed_fixtures", "historial"):
+            self.stats = {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": []}
+        for key in ("ligas", "processed_fixtures", "historial", "cached_picks"):
             if key not in self.stats or not isinstance(self.stats[key], (dict, list)):
                 self.stats[key] = {} if key == "ligas" else []
 
@@ -210,7 +212,7 @@ class FixItPRO:
                         return json.loads(content)
         except Exception as e:
             print(f"[{datetime.now()}] Warning: No se pudo cargar stats.json ({e})")
-        return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": []}
+        return {"ganadas": 0, "perdidas": 0, "ligas": {}, "processed_fixtures": [], "historial": [], "cached_picks": []}
 
     def save_stats(self):
         with open(self.stats_file, "w") as f:
@@ -243,7 +245,7 @@ class FixItPRO:
             if team_id in self.team_history_cache:
                 return self.team_history_cache[team_id]
 
-        time.sleep(0.35)  # ~10 req/min → ≤ 1 req cada 6 seg en carga normal
+        time.sleep(6.1)  # Plan gratuito: 10 req/min → 1 cada 6 seg para evitar 429
         url = f"{BASE_URL}/teams/{team_id}/matches?status=FINISHED&limit={limit}"
         try:
             resp = self.session.get(url, timeout=15)
@@ -264,8 +266,14 @@ class FixItPRO:
     # ── Coordinador principal ──────────────────────────────
     def fetch_data(self):
         """Coordinador: partidos → historiales → Poisson → picks con valor."""
+        with self._lock:
+            if self.is_fetching:
+                print(f"[{datetime.now()}] Ignorando fetch_data: ya hay uno en curso.")
+                return
+            self.is_fetching = True
+
         try:
-            print(f"[{datetime.now()}] Iniciando fetch_data v2...")
+            print(f"[{datetime.now()}] Iniciando fetch_data v2 (Optimizado)...")
             if not API_KEY:
                 with self._lock:
                     self.last_updated = "Error: Falta FOOTBALLDATA_API_KEY"
@@ -284,6 +292,7 @@ class FixItPRO:
 
             # ── Fase 1: Partidos ──────────────────────────
             all_matches = self.fetch_matches_for_dates(hoy_str, manana_str)
+            print(f"[{datetime.now()}] Partidos recibidos del API: {len(all_matches)}")
             enabled_comp_codes = set(ENABLED_COMPETITIONS.keys())
             filtered = [
                 m for m in all_matches
@@ -307,16 +316,18 @@ class FixItPRO:
             # ── Fase 3: Cache picks ───────────────────────
             with self._lock:
                 self.cached_picks = picks
+                self.stats["cached_picks"] = picks
                 self.last_updated = now_spain.strftime("%H:%M")
 
             self.update_stats_from_results()
+            self.save_stats()
             print(f"[{datetime.now()}] >>> FETCH OK: {len(picks)} value-picks <<<")
 
-        except Exception as e:
-            import traceback
-            print(f"[{datetime.now()}] CRITICAL:\n{traceback.format_exc()}")
             with self._lock:
                 self.last_updated = f"Error Motor: {str(e)[:20]}"
+        finally:
+            with self._lock:
+                self.is_fetching = False
 
     # ── Motor Poisson + Value Betting ──────────────────────
     def _build_poisson_picks(self, matches: list, now_spain: datetime) -> list:
@@ -375,8 +386,8 @@ class FixItPRO:
                 with self._lock:
                     self.last_updated = f"Analizando: {home_name[:12]} vs {away_name[:12]}"
 
-                home_hist = self.fetch_team_history(home_id, limit=10)
-                away_hist = self.fetch_team_history(away_id, limit=10)
+                home_hist = self.fetch_team_history(home_id, limit=5)
+                away_hist = self.fetch_team_history(away_id, limit=5)
 
                 # ── Lambdas Poisson ──
                 lam_home, lam_away = compute_lambdas(home_hist, away_hist)
@@ -542,7 +553,7 @@ def init_engine():
             return
         engine._thread_started = True
 
-        if not engine.matches and "Iniciando" in engine.last_updated:
+        if not engine.matches and "Sincronizando" in engine.last_updated:
             print(f"[{datetime.now()}] >>> INICIALIZANDO MOTOR EN WORKER <<<")
             threading.Thread(target=engine.fetch_data, daemon=True).start()
             engine.start_scheduler()
@@ -571,7 +582,7 @@ def get_daily_leagues_matches() -> dict:
     Prioriza ligas top + partidos que están en los picks actuales.
     """
     output     = {}
-    priority   = {"PL", "PD", "SA", "BL1", "CL", "EL"}
+    priority   = {"PL", "PD", "SA", "BL1", "CL", "EL", "ELC", "CLI", "BSA", "DED", "FL1"}
 
     with engine._lock:
         matches_snapshot = list(engine.matches)

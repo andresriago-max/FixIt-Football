@@ -42,9 +42,11 @@ def sync():
     from main import engine
     # Solo lanzar un nuevo hilo si no hay uno activo
     with engine._lock:
+        if engine.is_fetching:
+            return {"status": "Sincronización ocupada", "message": "Ya hay una actualización en curso. Por favor, espera a que termine."}
         engine.last_updated = "Sincronizando manualmente..."
     threading.Thread(target=engine.fetch_data, daemon=True).start()
-    return {"status": "Sincronización iniciada", "message": "Abriendo página principal en 30 segundos..."}
+    return {"status": "Sincronización iniciada", "message": "Procesando datos del API. Esto puede tardar 1-2 minutos..."}
 
 @app.route('/test-api')
 def test_api():
